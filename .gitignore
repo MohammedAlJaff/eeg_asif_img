@@ -1,5 +1,8 @@
 # 
 /maj_token.txt
+src/tests/*
+data/*
+logs/
 
 
 # Byte-compiled / optimized / DLL files

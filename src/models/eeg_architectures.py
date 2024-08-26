@@ -1,10 +1,12 @@
 import torch
 import torch.nn as nn
 from collections import OrderedDict
+import numpy as np
+import math
 
 
 class EEGNet(nn.Module):
-    def __init__(self, n_channels=32, f1=8, d=2, f2=16, kernel_length=64, dropout_rate=0.5):
+    def __init__(self, n_samples, n_channels=32, f1=8, d=2, f2=16, kernel_length=64, dropout_rate=0.5, n_classes=2):
         super().__init__()
 
         # implementation of the original EEGNet without the classification layer
@@ -29,44 +31,16 @@ class EEGNet(nn.Module):
             ('pool2', nn.AvgPool2d(kernel_size=(1, 8))),
             ('do2', nn.Dropout(p=dropout_rate)),
             ('flat', nn.Flatten()),
-            # ('lnout', nn.Linear(f2 * (n_samples // 32), n_classes if n_classes > 2 else 1))
+            ('lnout', nn.Linear(f2 * (n_samples // 32), n_classes if n_classes > 2 else 1))
         ]))
 
     def forward(self, x):
         x = self.model(x)
-        return x.unsqueeze(1)
-    
-class EEGNet1D(nn.Module):
-    def __init__(self, n_channels=96, f1=8, d=2, f2=16, kernel_length=64, dropout_rate=0.5):
-        super().__init__()
-        self.model = torch.nn.Sequential(OrderedDict([
-            # Input shape: (batch_size, n_channels, n_time_samples)
-            ('conv1', nn.Conv1d(in_channels=n_channels, out_channels=f1, kernel_size=kernel_length, padding='same')),
-            ('bn1', nn.BatchNorm1d(f1)),
-            ('conv2', nn.Conv1d(in_channels=f1, out_channels=d * f1, kernel_size=1, groups=f1, padding='valid')),
-            ('bn2', nn.BatchNorm1d(d * f1)),
-            ('elu1', nn.ELU()),
-            ('pool1', nn.AvgPool1d(kernel_size=4)),
-            ('do1', nn.Dropout(p=dropout_rate)),
-            ('conv3', nn.Conv1d(in_channels=d * f1, out_channels=f2, kernel_size=16, groups=d * f1, padding='same')),
-            ('conv4', nn.Conv1d(in_channels=f2, out_channels=f2, kernel_size=1, padding='same')),
-            ('bn3', nn.BatchNorm1d(f2)),
-            ('elu2', nn.ELU()),
-            ('pool2', nn.AvgPool1d(kernel_size=8)),
-            ('do2', nn.Dropout(p=dropout_rate)),
-            ('flat', nn.Flatten()),
-            # Adjusted output linear layer size according to your pooling and convolution operations
-            # ('lnout', nn.Linear(f2 * ((n_samples // 4) // 8), n_classes if n_classes > 2 else 1))
-        ]))
-    def forward(self, x):
-        # input shape: (n_trials, n_channels, n_samples)
-        # x = x.double()  # Ensure input is double if required by the model's design
-        x = self.model(x)
-        return x
+        # return x.unsqueeze(1)
 
 
 class lstm(nn.Module):
-    def __init__(self, input_size=128, lstm_size=128, lstm_layers=1, device='cuda'):
+    def __init__(self, input_size=128, lstm_size=128, lstm_layers=1, output_size=128, n_classes=2, device='cuda'):
         # Call parent
         super().__init__()
         # Define parameters
@@ -76,6 +50,8 @@ class lstm(nn.Module):
 
         # Define internal modules
         self.lstm = nn.LSTM(input_size, lstm_size, num_layers=lstm_layers, batch_first=True)
+        self.output = nn.Linear(lstm_size, output_size)
+        self.classifier = nn.Linear(output_size, n_classes if n_classes > 2 else 1)
         self.device = device
     def forward(self, x):
         # Forward LSTM and get final state
@@ -85,7 +61,11 @@ class lstm(nn.Module):
         x = x.squeeze(dim=1).permute((0, 2, 1))
         x, (hn, cn) = self.lstm(x, (h_0, c_0))
 
-        return hn[-1, ...]
+        # Forward output
+        x = nn.functional.relu(self.output(hn[-1, ...]))
+        x = self.classifier((x))
+
+        return x
 
 # Code from GitHub repository of: Lima, E.M., Ribeiro, A.H., Paixão, G.M.M. et al. Deep neural network-estimated electrocardiographic age as a 
 # mortality predictor. Nat Commun 12, 5117 (2021). https://doi.org/10.1038/s41467-021-25351-7. 
@@ -243,7 +223,7 @@ class ResNet1d(nn.Module):
         x = x.view(x.size(0), -1)
 
         # Fully conected layer
-        # x = self.lin(x)
+        x = self.lin(x)
         return x
     
 # The model proposed by the work: S. Palazzo, C. Spampinato, I. Kavasidis, D. Giordano, J. Schmidt, M. Shah,
@@ -356,7 +336,7 @@ class ResidualBlock(nn.Module):
         return out
 
 
-class EEGChannelNet(nn.Module):
+class EEGChannelNet_FE(nn.Module):
     def __init__(self, in_channels, temp_channels, out_channels, input_width, in_height,
                  temporal_kernel, temporal_stride, temporal_dilation_list, num_temporal_layers,
                  num_spatial_layers, spatial_stride, num_residual_blocks, down_kernel, down_stride):
@@ -396,6 +376,59 @@ class EEGChannelNet(nn.Module):
                 out = res_block(out)
 
         out = self.final_conv(out)
+        # out = out.view(x.size(0), -1)
+
+        return out
+
+class EEGChannelNet(nn.Module):
+    '''The model for EEG classification.
+    The imput is a tensor where each row is a channel the recorded signal and each colums is a time sample.
+    The model performs different 2D to extract temporal e spatial information.
+    The output is a vector of classes where the maximum value is the predicted class.
+    Args:
+        in_channels: number of input channels
+        temp_channels: number of features of temporal block
+        out_channels: number of features before classification
+        num_classes: number possible classes
+        embedding_size: size of the embedding vector
+        input_width: width of the input tensor (necessary to compute classifier input size)
+        input_height: height of the input tensor (necessary to compute classifier input size)
+        temporal_dilation_list: list of dilations for temporal convolutions, second term must be even
+        temporal_kernel: size of the temporal kernel, second term must be even (default: (1, 32))
+        temporal_stride: size of the temporal stride, control temporal output size (default: (1, 2))
+        num_temp_layers: number of temporal block layers
+        num_spatial_layers: number of spatial layers
+        spatial_stride: size of the spatial stride
+        num_residual_blocks: the number of residual blocks
+        down_kernel: size of the bottleneck kernel
+        down_stride: size of the bottleneck stride
+        '''
+    def __init__(self, in_channels=1, temp_channels=10, out_channels=50, num_classes=40, embedding_size=1000,
+                 input_width=440, input_height=128, temporal_dilation_list=[(1,1),(1,2),(1,4),(1,8),(1,16)],
+                 temporal_kernel=(1,33), temporal_stride=(1,2),
+                 num_temp_layers=4,
+                 num_spatial_layers=4, spatial_stride=(2,1), num_residual_blocks=4, down_kernel=3, down_stride=2):
+        super().__init__()
+
+        self.encoder = EEGChannelNet_FE(in_channels, temp_channels, out_channels, input_width, input_height,
+                                     temporal_kernel, temporal_stride,
+                                     temporal_dilation_list, num_temp_layers,
+                                     num_spatial_layers, spatial_stride, num_residual_blocks, down_kernel, down_stride
+                                     )
+
+        encoding_size = self.encoder(torch.zeros(1, in_channels, input_height, input_width)).contiguous().view(-1).size()[0]
+
+        self.classifier = nn.Sequential(
+            nn.Linear(encoding_size, embedding_size),
+            nn.ReLU(True),
+            nn.Linear(embedding_size, num_classes if num_classes > 2 else 1), 
+        )
+
+    def forward(self, x):
+        out = self.encoder(x)
+
         out = out.view(x.size(0), -1)
+
+        out = self.classifier(out)
 
         return out

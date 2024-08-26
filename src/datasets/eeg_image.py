@@ -6,7 +6,8 @@ Load data proposed by:
 """
 import sys
 
-sys.path.append("/proj/berzelius-2023-338/users/x_nonra/eeg_asif_img/")
+# sys.path.append("/proj/berzelius-2023-338/users/x_nonra/eeg_asif_img/")
+sys.path.append("/mimer/NOBACKUP/groups/eeg_foundation_models/eeg_asif_img/")
 
 import os
 import numpy as np
@@ -80,7 +81,7 @@ class EEGImagenet(Dataset):
             self,
             data_path,
             n_classes,
-            z_score,
+            z_score=True,
             img_size=224,
             fs=256,
             time_low=-0.1,
@@ -144,16 +145,16 @@ class EEGImagenet(Dataset):
             eeg = np.expand_dims(eeg, axis=0)
         eeg = eeg[:, :, self.time_low:self.time_high]
 
-        # set time length to 512
-        if eeg.shape[-1] > 512:
-            idx = np.random.randint(0, int(eeg.shape[-1] - 512) + 1)
+        # # set time length to 512
+        # if eeg.shape[-1] > 512:
+        #     idx = np.random.randint(0, int(eeg.shape[-1] - 512) + 1)
 
-            eeg = eeg[..., idx: idx + 512]
-        else:
-            x1 = np.linspace(0, 1, eeg.shape[-1])
-            x2 = np.linspace(0, 1, 512)
-            f = interp1d(x1, eeg, axis=-1)
-            eeg = f(x2)
+        #     eeg = eeg[..., idx: idx + 512]
+        # else:
+        #     x1 = np.linspace(0, 1, eeg.shape[-1])
+        #     x2 = np.linspace(0, 1, 512)
+        #     f = interp1d(x1, eeg, axis=-1)
+        #     eeg = f(x2)
 
         if self.z_score:
             # z_score normalization
@@ -191,7 +192,7 @@ class Splitter(Dataset):
 
 if __name__ == "__main__":
     selected = None
-    eeg_path = "/proj/berzelius-2023-338/users/x_nonra/eeg_asif_img/data/"
+    eeg_path = "/mimer/NOBACKUP/groups/eeg_foundation_models/eeg_asif_img/data/"
     data_loaded = EEGImagenet(
         data_path=eeg_path,
         z_score=False,
@@ -200,7 +201,7 @@ if __name__ == "__main__":
         fs=1000,
         time_low=0.02,
         time_high=0.46,
-        download=False
+        download=True
     )
     print(len(data_loaded))
     x, l = data_loaded[0]

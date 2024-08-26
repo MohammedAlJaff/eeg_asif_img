@@ -6,7 +6,7 @@ from torchvision.models.feature_extraction import create_feature_extractor, get_
 from src.models import eeg_architectures
 
 
-class EEGEncoder(nn.Module):
+class EEGEncoder(nn.Module): # TODO: now every architecture has a classification layer -> embedding should be extracted from penultimate layer.
     def __init__(self,
                  embed_dim=1024,
                  backbone="eegnet",
@@ -33,8 +33,6 @@ class EEGEncoder(nn.Module):
             self.eeg_backbone = eeg_architectures.EEGNet(n_channels=n_channels)
 
             print(get_graph_node_names(self.eeg_backbone))
-        elif backbone == 'eegnet1d':
-            self.eeg_backbone = eeg_architectures.EEGNet1D(n_channels=n_channels)
 
         elif backbone == 'EEGChannelNet':
             # out_channels = 32 for the sake of memory and 50 default, num_residual_blocks = 3 for Ahmed

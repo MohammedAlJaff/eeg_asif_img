@@ -14,7 +14,7 @@ def load_dataset(dataset_name, data_path, **kwargs):
             "t_l": 0.02,
             "t_h": 0.46,
             "fs": 1000,
-            "n_samples": int((t_h - t_l) * fs),
+            "n_samples": int((0.46 - 0.02) * 1000),
             "n_channels": 128,
             "n_classes": 40,
         }

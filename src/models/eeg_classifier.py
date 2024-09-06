@@ -40,7 +40,7 @@ class EEGClassifier(nn.Module):
         elif backbone == 'EEGChannelNet':
             # out_channels = 32 for the sake of memory and 50 default, num_residual_blocks = 3 for Ahmed
             # and 4 for Spampinato
-            self.eeg_backbone = eeg_architectures.EEGChannelNet(num_classes=n_classes, input_height=n_channels, input_width=n_samples)
+            self.eeg_backbone = eeg_architectures.EEGChannelNet(num_classes=n_classes, input_height=n_channels, input_width=n_samples, out_channels=32)
 
         elif backbone == 'lstm':
             self.eeg_backbone = eeg_architectures.lstm(input_size=n_channels, lstm_size=kwargs['lstm_size'],

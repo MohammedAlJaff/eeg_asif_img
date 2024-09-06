@@ -1,11 +1,12 @@
 import os
 import numpy as np
 import torch
+from torchmetrics import Accuracy
 from torch.utils.data import DataLoader
 from torch.cuda.amp import GradScaler, autocast
 from tqdm import tqdm
 import wandb
-import model.training_utils as ut
+import src.models.training_utils as ut
 import copy 
 
 
@@ -19,6 +20,7 @@ class UnimodalTrainer:
         self.loss = loss.to(device)
         self.loss_scaler = ut.NativeScalerWithGradNormCount()
         self.optimizer = optimizer
+        self.accuracy = Accuracy(task='multiclass', num_classes=kwargs["num_classes"])
 
         self.epochs = kwargs['epochs']
         self.mixed_precision = kwargs['mixed_precision']
@@ -42,6 +44,8 @@ class UnimodalTrainer:
             print(f"Epoch {epoch}/{self.epochs}.")
             steps = 0
             loss_epoch = []
+            y_true = []
+            y_pred = []
             self.model.train()
             progress_bar = tqdm(train_data_loader)
             for data, y in progress_bar:
@@ -63,8 +67,13 @@ class UnimodalTrainer:
                     loss = self.loss(preds, y)
 
                 loss_epoch.append(loss.item())
+                y_true.extend(y)
+                y_pred.extend(torch.sigmoid(preds))
 
                 self.loss_scaler(loss, self.optimizer, parameters=self.model.parameters(), clip_grad=self.clip_grad)
+                with torch.no_grad():
+                    train_acc = self.accuracy(torch.stack(y_pred).detach().cpu().float(),
+                                              torch.stack(y_true).detach().cpu())
 
                 if self.device == torch.device('cuda'):
                     self.lr = self.optimizer.param_groups[0]["lr"]
@@ -73,7 +82,7 @@ class UnimodalTrainer:
 
             train_loss = np.mean(loss_epoch)
 
-            val_loss = self.evaluate(self.model, val_data_loader)
+            val_loss, val_acc = self.evaluate(self.model, val_data_loader)
             if val_loss < best_loss:
                 best_loss = val_loss
                 patience = self.patience
@@ -81,7 +90,8 @@ class UnimodalTrainer:
                     'epoch': epoch,
                     'model_state_dict': copy.deepcopy(self.model.state_dict()),
                     'optimizer_state_dict': copy.deepcopy(self.optimizer.state_dict()),
-                    'loss': val_loss
+                    'val_loss': val_loss,
+                    'val_acc': val_acc,
                 }
             else:
                 patience -= 1
@@ -89,7 +99,9 @@ class UnimodalTrainer:
             if patience == 0:
                 break
 
-            print(f'Epoch: {epoch} | Training Loss: {train_loss} | Validation Loss: {val_loss}')
+            print(f'Epoch: {epoch}')
+            print(f'Training Acc.: {train_acc}| Training Loss: {train_loss}')
+            print(f'Validation Acc.: {val_acc}| Validation Loss: {val_loss}')
 
             wandb.log({
                 "train_loss": train_loss,
@@ -104,10 +116,11 @@ class UnimodalTrainer:
                 'epoch': self.epochs,
                 'model_state_dict': copy.deepcopy(self.model.state_dict()),
                 'optimizer_state_dict': copy.deepcopy(self.optimizer.state_dict()),
-                'loss': loss
+                'val_loss': val_loss,
+                'val_acc': val_acc,
             }
 
-        print(f"Best Validation Loss = {best_model['loss']} (Epoch = {best_model['epoch']})")
+        print(f"Best Validation Loss = {best_model['val_loss']} (Epoch = {best_model['epoch']})")
         # filename = f'{self.save_path}/checkpoint.pth.tar'
         torch.save(best_model, os.path.join(self.save_path, self.filename))
         # filename_img = f'{self.writer.log_dir}/checkpoint_image_encoder.pth.tar'
@@ -123,20 +136,22 @@ class UnimodalTrainer:
         model.eval()
         with torch.no_grad():
 
-            total_loss = []
+            loss_epoch = []
+            y_true = []
+            y_pred = []
             progress_bar = tqdm(dataloader)
-            for data in progress_bar:
-                eeg_samples = data.to(self.device)
+            for data, y in progress_bar:
+                x, _ = data
+                x = x.to(self.device)
+                y = y.to(self.device)
                 with autocast(enabled=self.mixed_precision):
-                    loss, pred, _ = self.model(eeg_samples, mask_ratio=self.mask_ratio)
-                loss_value = loss.item()
+                    preds = self.model(x)
+                    loss = self.loss(preds, y)
+                loss_epoch.append(loss.item())
+                y_true.extend(y)
+                y_pred.extend(torch.sigmoid(preds))
+            mean_loss_epoch = np.mean(loss_epoch)
+            acc = self.accuracy(torch.stack(y_pred).detach().cpu().float(),
+                                torch.stack(y_true).detach().cpu())
 
-                pred = pred.to('cpu').detach()
-                eeg_samples = eeg_samples.to('cpu').detach()
-                pred = self.model_without_ddp.unpatchify(pred)
-
-                total_loss.append(loss_value)
-
-        mean_loss = np.mean(total_loss)
-
-        return mean_loss, 
+        return mean_loss_epoch, acc 

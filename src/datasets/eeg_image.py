@@ -160,7 +160,7 @@ class EEGImagenet(Dataset):
             # z_score normalization
             eeg = (eeg - np.mean(eeg, axis=-1, keepdims=True)) / (np.std(eeg, axis=-1, keepdims=True) + 1e-08)
 
-        pair = self.pairs[self.indices[item]].copy()
+        pair = self.pairs[self.image_files[self.indices[item]]].copy()
         sample = (torch.from_numpy(eeg).to(torch.float), (self.img_preprocess(pair).to(torch.float)))
         label = self.class_dict[str(self.labels[self.indices[item]])]
         # img_file = self.image_files[self.indices[item]].copy()

@@ -51,6 +51,7 @@ class EEGClassifier(nn.Module):
                 n_channels=n_channels, 
                 n_samples=n_samples, 
                 net_filter_size=[16, 16, 32, 32, 64], 
+                # net_seq_length=[n_samples, 128, 64, 32, 16],
                 net_seq_length=[n_samples, 128, 64, 32, 16], 
                 n_classes=n_classes)
         else:

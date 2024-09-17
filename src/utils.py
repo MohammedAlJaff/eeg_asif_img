@@ -9,12 +9,13 @@ def save_config(loaded_config, root_path, filename='config_run.json'):
         json.dump(loaded_config.as_dict(), file)
 
 def load_dataset(dataset_name, data_path, **kwargs):
-    if dataset_name == "spampinato":
+    if dataset_name == "spampinato_npy":
         data_configs = {
             "t_l": 0.02,
             "t_h": 0.46,
             "fs": 1000,
-            "n_samples": int((0.46 - 0.02) * 1000),
+            # "n_samples": int((0.46 - 0.02) * 1000),
+            "n_samples": 512,
             "n_channels": 128,
             "n_classes": 40,
         }

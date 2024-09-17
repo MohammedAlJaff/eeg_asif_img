@@ -3,7 +3,7 @@ import numpy as np
 import torch
 from torchmetrics import Accuracy
 from torch.utils.data import DataLoader
-from torch.cuda.amp import GradScaler, autocast
+from torch.cuda.amp import GradScaler
 from tqdm import tqdm
 import wandb
 import src.models.training_utils as ut
@@ -34,7 +34,7 @@ class UnimodalTrainer:
         self.clip_grad = 0.8
 
     def train(self, train_data_loader: DataLoader, val_data_loader: DataLoader):
-        scaler = GradScaler(enabled=self.mixed_precision)
+        scaler = GradScaler(self.device, enabled=self.mixed_precision)
 
         best_model = None
         best_loss = 10000000
@@ -59,10 +59,10 @@ class UnimodalTrainer:
 
                 self.optimizer.zero_grad()
 
-                x = x.to(self.device)
-                y = y.to(self.device)
+                x = x.to(self.device, non_blocking=True)
+                y = y.to(self.device, non_blocking=True)
 
-                with autocast(enabled=self.mixed_precision):
+                with torch.autocast(device_type=self.device, enabled=self.mixed_precision):
                     preds = self.model(x)
                     loss = self.loss(preds, y)
 
@@ -105,7 +105,9 @@ class UnimodalTrainer:
 
             wandb.log({
                 "train_loss": train_loss,
-                "val_loss": val_loss
+                "val_loss": val_loss,
+                "train_acc": train_acc,
+                "val_acc": val_acc
             })
 
         print("Finished training.")
@@ -142,9 +144,9 @@ class UnimodalTrainer:
             progress_bar = tqdm(dataloader)
             for data, y in progress_bar:
                 x, _ = data
-                x = x.to(self.device)
-                y = y.to(self.device)
-                with autocast(enabled=self.mixed_precision):
+                x = x.to(self.device, non_blocking=True)
+                y = y.to(self.device, non_blocking=True)
+                with torch.autocast(device_type=self.device, enabled=self.mixed_precision):
                     preds = self.model(x)
                     loss = self.loss(preds, y)
                 loss_epoch.append(loss.item())

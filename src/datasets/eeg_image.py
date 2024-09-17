@@ -113,6 +113,7 @@ class EEGImagenet(Dataset):
             time_low=-0.1,
             time_high=1.0,
             subject_id=0,
+            load_img=False,
             download=False,
     ):
 
@@ -128,6 +129,7 @@ class EEGImagenet(Dataset):
         self.transforms_img = T.Compose([T.ToTensor(), T.ConvertImageDtype(dtype=torch.float32)])
         self.transforms_tensor2img = T.Compose([T.ToPILImage()])
         self.img_preprocess = _transform(img_size)
+        self.load_img = load_img
 
         data_path = os.path.join(data_path, "spampinato_all_subj_npy")
         os.makedirs(data_path, exist_ok=True)
@@ -188,9 +190,13 @@ class EEGImagenet(Dataset):
             # z_score normalization
             eeg = (eeg - np.mean(eeg, axis=-1, keepdims=True)) / (np.std(eeg, axis=-1, keepdims=True) + 1e-08)
 
-        pair = self.pairs[self.image_files[self.indices[item]]].copy()
-        sample = (torch.from_numpy(eeg).to(torch.float), (self.img_preprocess(pair).to(torch.float)))
-        label = self.class_dict[str(self.labels[self.indices[item]])]
+        if self.load_img:
+            pair = self.pairs[self.image_files[self.indices[item]]].copy()
+            sample = (torch.from_numpy(eeg).to(torch.float), (self.img_preprocess(pair).to(torch.float)))
+            label = self.class_dict[str(self.labels[self.indices[item]])]
+        else:
+            sample = torch.from_numpy(eeg).to(torch.float)
+            label = self.class_dict[str(self.labels[self.indices[item]])]
         # img_file = self.image_files[self.indices[item]].copy()
 
         return sample, label

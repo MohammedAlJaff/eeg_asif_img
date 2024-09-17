@@ -55,7 +55,7 @@ class UnimodalTrainer:
                                         warmup_epochs=self.warmup_epochs, num_epoch=self.epochs,
                                         lr=self.lr, min_lr=self.min_lr)
 
-                x, _ = data
+                x = data
 
                 self.optimizer.zero_grad()
 
@@ -143,7 +143,7 @@ class UnimodalTrainer:
             y_pred = []
             progress_bar = tqdm(dataloader)
             for data, y in progress_bar:
-                x, _ = data
+                x = data
                 x = x.to(self.device, non_blocking=True)
                 y = y.to(self.device, non_blocking=True)
                 with torch.autocast(device_type=self.device, enabled=self.mixed_precision):

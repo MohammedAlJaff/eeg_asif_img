@@ -105,3 +105,5 @@ if __name__ == "__main__":
     x_in = torch.randn((1, 1, 128, 512))
     x_out = model(x_in)
     print(x_out.shape)
+
+    

@@ -1,3 +1,6 @@
+import torch
+import numpy as np
+from tqdm import tqdm
 import json
 import os
 
@@ -30,3 +33,28 @@ def load_dataset(dataset_name, data_path, **kwargs):
     else: 
         raise NotImplementedError
     return dataset, data_configs
+
+def get_embeddings(model, data_loader, device='cuda'):
+    
+    progress_bar = tqdm(data_loader)
+    embeddings = None
+    labels = None
+    model.eval()
+    with torch.no_grad():
+        for x, y in progress_bar:
+            x = x.to(device)
+            y = y.to(device)
+            e = model(x)
+            if embeddings is None:
+                embeddings = e.detach().cpu().numpy()
+                labels = y.detach().cpu().numpy()
+            else:
+                embeddings = np.concatenate((embeddings, e.detach().cpu().numpy()), axis=0)
+                labels = np.concatenate((labels, y.detach().cpu().numpy()), axis=0)
+            # embeddings.append(e.detach().cpu().numpy())
+            # labels.append(y.detach().cpu().numpy())
+    print(embeddings.shape)
+    print(labels)
+    return embeddings, labels
+
+    

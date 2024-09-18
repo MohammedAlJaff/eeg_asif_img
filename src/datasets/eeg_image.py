@@ -212,6 +212,8 @@ class SpampinatoDataset:
         time_low=0.02,
         time_high=0.46,
         fs=1000,
+        img_size=224,
+        load_img=False,
         download=False
         ):
 
@@ -219,6 +221,10 @@ class SpampinatoDataset:
         self.time_low = int((time_low - 0.02) * self.fs)
         self.time_high = int((time_high - 0.02) * self.fs)
         self.subject_id = subject_id
+
+        self.image_parent_dir = "/proj/common-datasets/ImageNet/train/"
+        self.img_preprocess = _transform(img_size)
+        self.load_img = load_img
 
         data_path = os.path.join(data_path, "spampinato_et_al")
         os.makedirs(data_path, exist_ok=True)
@@ -237,10 +243,9 @@ class SpampinatoDataset:
         image_data_path="/proj/common-datasets/ImageNet/train/"
         loaded = torch.load(eeg_signals_path)
         if subject_id!=0:
-            self.data = [loaded['dataset'][i] for i in range(len(loaded['dataset']) ) if loaded['dataset'][i]['subject']==opt.subject]
+            self.data = [loaded['dataset'][i] for i in range(len(loaded['dataset']) ) if loaded['dataset'][i]['subject']==subject_id]
         else:
             self.data=loaded['dataset']      
-        print(self.data[0].keys())  
         self.labels = loaded["labels"]
         self.images = loaded["images"]
         
@@ -257,10 +262,17 @@ class SpampinatoDataset:
         eeg = self.data[i]["eeg"].float().t()
         eeg = eeg[self.time_low:self.time_high,:]
         # Get image
-        # Get label
-        label = self.data[i]["label"]
+        if self.load_img:
+            image_synset = self.images[self.data[i]["image"]].split("_")[0]
+            train_img_file = os.path.join(self.image_parent_dir, image_synset, self.images[self.data[i]["image"]]+".JPEG")
+            pair = Image.open(train_img_file).convert('RGB')
+            sample = (eeg.to(torch.float), (self.img_preprocess(pair).to(torch.float)))
+            label = self.data[i]["label"]
+        else:
+            sample = eeg.to(torch.float)
+            label = self.data[i]["label"]
         # Return
-        return eeg, label
+        return sample, label
 
 class Splitter(Dataset):
     def __init__(self, dataset, split_path, split_num=0, split_name="train"):
@@ -389,7 +401,8 @@ if __name__ == "__main__":
             fs=1000,
             time_low=0.02,
             time_high=0.46,
-            download=True
+            load_img=True,
+            download=False
         )
     elif selected == "things-eeg-2":
         data_loaded = ThingsEEG2(

@@ -239,7 +239,7 @@ class SpampinatoDataset:
             unzip_nested_files(data_path)
 
         # Load EEG signals
-        eeg_signals_path = os.path.join(data_path, "eeg_14_70_std.pth")
+        eeg_signals_path = os.path.join(data_path, "eeg_55_95_std.pth")
         image_data_path="/proj/common-datasets/ImageNet/train/"
         loaded = torch.load(eeg_signals_path)
         if subject_id!=0:
@@ -259,8 +259,9 @@ class SpampinatoDataset:
     # Get item
     def __getitem__(self, i):
         # Process EEG
-        eeg = self.data[i]["eeg"].float().t()
-        eeg = eeg[self.time_low:self.time_high,:]
+        eeg = self.data[i]["eeg"].float()
+        eeg = eeg[:, self.time_low:self.time_high]
+        eeg = eeg.unsqueeze(axis=0)
         # Get image
         if self.load_img:
             image_synset = self.images[self.data[i]["image"]].split("_")[0]
@@ -274,13 +275,17 @@ class SpampinatoDataset:
         # Return
         return sample, label
 
-class Splitter(Dataset):
+# Splitter class
+class Splitter:
+
     def __init__(self, dataset, split_path, split_num=0, split_name="train"):
         # Set EEG dataset
         self.dataset = dataset
         # Load split
         loaded = torch.load(split_path)
         self.split_idx = loaded["splits"][split_num][split_name]
+        # Filter data
+        self.split_idx = [i for i in self.split_idx if 450 <= self.dataset.data[i]["eeg"].size(1) <= 600]
         # Compute size
         self.size = len(self.split_idx)
 
@@ -291,9 +296,9 @@ class Splitter(Dataset):
     # Get item
     def __getitem__(self, i):
         # Get sample from dataset
-        sample, label, img_file = self.dataset[self.split_idx[i]]
+        eeg, label = self.dataset[self.split_idx[i]]
         # Return
-        return sample, label, img_file
+        return eeg, label
 
 class ThingsEEG2(Dataset):
     def __init__(
@@ -337,6 +342,10 @@ class ThingsEEG2(Dataset):
                 'preprocessed_eeg_training.npy'), allow_pickle=True).item()
         self.eeg_data_test = np.load(os.path.join(self.eeg_parent_dir,
                 'preprocessed_eeg_test.npy'), allow_pickle=True).item() 
+
+        print('\nEEG channels:')
+        for c,chan in enumerate(self.eeg_data_train['ch_names']):
+            print(c, chan)
         
         # img_data['train_img_concepts'] defines the classes 
         self.img_parent_dir  = os.path.join(data_path, 'images')
@@ -344,7 +353,8 @@ class ThingsEEG2(Dataset):
 	            allow_pickle=True).item()
 
         self.eeg_data = self.eeg_data_train['preprocessed_eeg_data']
-        self.labels = self.img_metadata['train_img_concepts']
+        tmp_labels = self.img_metadata['train_img_concepts']
+        self.labels = [int(l.split("_")[0])-1 for l in tmp_labels]
 
 
     def __len__(self):
@@ -368,10 +378,10 @@ class ThingsEEG2(Dataset):
             train_img_file = os.path.join(self.img_parent_dir, 'training_images', 
                     self.img_metadata['train_img_concepts'][item], self.img_metadata['train_img_files'][item])
             pair = Image.open(train_img_file).convert('RGB')
-            sample = (torch.from_numpy(eeg).to(torch.float), (self.img_transform(pair).to(torch.float)))
+            sample = (torch.from_numpy(np.mean(eeg[:, :, 1:, :], axis=1)).to(torch.float), (self.img_transform(pair).to(torch.float)))
             label = self.labels[item]
         else:
-            sample = torch.from_numpy(eeg).to(torch.float)
+            sample = torch.from_numpy(np.mean(eeg[:, :, 1:, :], axis=1)).to(torch.float)
             label = self.labels[item]
         # img_file = self.image_files[self.indices[item]].copy()
 

@@ -35,6 +35,8 @@ class EEGClassifier(nn.Module):
         f2 = 16
 
         if backbone == 'eegnet':
+            print('n_channels = ', n_channels)
+            print('n_samples = ', n_samples)
             self.eeg_backbone = eeg_architectures.EEGNet(n_samples=n_samples, n_channels=n_channels, n_classes=n_classes)
 
         elif backbone == 'EEGChannelNet':
@@ -51,7 +53,6 @@ class EEGClassifier(nn.Module):
                 n_channels=n_channels, 
                 n_samples=n_samples, 
                 net_filter_size=[16, 16, 32, 32, 64], 
-                # net_seq_length=[n_samples, 128, 64, 32, 16],
                 net_seq_length=[n_samples, 128, 64, 32, 16], 
                 n_classes=n_classes)
         else:

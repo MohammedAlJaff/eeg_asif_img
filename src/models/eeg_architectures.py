@@ -300,6 +300,7 @@ class SpatialBlock(nn.Module):
 
         for layer in self.layers:
             out = layer(x)
+            print(out.shape)
             features.append(out)
 
         out = torch.cat(features, 1)
@@ -418,6 +419,7 @@ class EEGChannelNet(nn.Module):
                                      )
 
         encoding_size = self.encoder(torch.zeros(1, in_channels, input_height, input_width)).contiguous().view(-1).size()[0]
+        print(encoding_size)
 
         self.classifier = nn.Sequential(
             nn.Linear(encoding_size, embedding_size),

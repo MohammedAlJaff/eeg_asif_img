@@ -29,13 +29,14 @@ class EEGEncoder(nn.Module): # TODO: now every architecture has a classification
         self.backbone_type = backbone
         self.checkpoint = torch.load(model_path)['model_state_dict'] if model_path is not None else None
         
-        new_state_dict = {}
-        for key, value in self.checkpoint.items():
-            # Remove 'eeg_backbone.' from the keys
-            new_key = key.replace("eeg_backbone.", "")
-            new_state_dict[new_key] = value
-        
-        self.checkpoint = new_state_dict
+        if self.checkpoint is not None:
+            new_state_dict = {}
+            for key, value in self.checkpoint.items():
+                # Remove 'eeg_backbone.' from the keys
+                new_key = key.replace("eeg_backbone.", "")
+                new_state_dict[new_key] = value
+            
+            self.checkpoint = new_state_dict
         
         dropout_rate = 0.5
         kernel_length = 64
@@ -94,9 +95,9 @@ class EEGEncoder(nn.Module): # TODO: now every architecture has a classification
             x = x.squeeze(1)
         out = self.eeg_backbone(x)[self.return_node]
         out = out.view(out.size(0), -1)
-        out = self.repr_layer(out)
+        embedding = self.repr_layer(out)
         
-        return out.squeeze(dim=1)
+        return out.squeeze(dim=1), embedding.squeeze(dim=1)
 
 
 if __name__ == "__main__":

@@ -17,7 +17,6 @@ def load_dataset(dataset_name, data_path, **kwargs):
             "t_l": 0.02,
             "t_h": 0.46,
             "fs": 1000,
-            # "n_samples": int((0.46 - 0.02) * 1000),
             "n_samples": 512,
             "n_channels": 128,
             "n_classes": 40,
@@ -28,7 +27,36 @@ def load_dataset(dataset_name, data_path, **kwargs):
             time_low=data_configs['t_l'],
             time_high=data_configs['t_h'],
             fs=data_configs['fs'],
-            subject_id=kwargs['sid']
+            subject_id=kwargs['sid'],
+            load_img=kwargs['load_img']
+        )
+    elif dataset_name == "spampinato":
+        data_configs = {
+            "t_l": 0.02,
+            "t_h": 0.46,
+            "fs": 1000,
+            "n_samples": 440,
+            "n_channels": 128,
+            "n_classes": 40,
+        }
+        dataset = eimg.SpampinatoDataset(
+            data_path=data_path,
+            subject_id=kwargs['sid'],
+            load_img=kwargs['load_img']
+        )
+    elif dataset_name == "things-eeg-2":
+        data_configs = {
+            "t_l": -0.2,
+            "t_h": 0.8,
+            "fs": 128,  # I have changed this from 100 to 128 in the Dataset description
+            "n_samples": 128,
+            "n_channels": 16,
+            "n_classes": 1654,
+        }
+        dataset = eimg.ThingsEEG2(
+            data_path=data_path,
+            subject_id=kwargs['sid'],
+            load_img=kwargs['load_img']
         )
     else: 
         raise NotImplementedError
@@ -44,7 +72,7 @@ def get_embeddings(model, data_loader, device='cuda'):
         for x, y in progress_bar:
             x = x.to(device)
             y = y.to(device)
-            e = model(x)
+            _, e = model(x)
             if embeddings is None:
                 embeddings = e.detach().cpu().numpy()
                 labels = y.detach().cpu().numpy()

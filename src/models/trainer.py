@@ -1,6 +1,8 @@
 import os
+import itertools
 import numpy as np
 import torch
+import torch.nn.functional as F
 from torchmetrics import Accuracy
 from torch.utils.data import DataLoader
 from torch.cuda.amp import GradScaler
@@ -62,7 +64,7 @@ class UnimodalTrainer:
                 x = x.to(self.device, non_blocking=True)
                 y = y.to(self.device, non_blocking=True)
 
-                with torch.autocast(device_type=self.device, enabled=self.mixed_precision):
+                with torch.autocast(device_type="cuda" if self.device.startswith("cuda") else "cpu", enabled=self.mixed_precision):
                     preds = self.model(x)
                     loss = self.loss(preds, y)
 
@@ -146,7 +148,7 @@ class UnimodalTrainer:
                 x = data
                 x = x.to(self.device, non_blocking=True)
                 y = y.to(self.device, non_blocking=True)
-                with torch.autocast(device_type=self.device, enabled=self.mixed_precision):
+                with torch.autocast(device_type="cuda" if self.device.startswith("cuda") else "cpu", enabled=self.mixed_precision):
                     preds = self.model(x)
                     loss = self.loss(preds, y)
                 loss_epoch.append(loss.item())
@@ -160,16 +162,17 @@ class UnimodalTrainer:
 
 
 class BimodalTrainer:
-    def __init__(self, model: torch.nn.Module, optimizer: torch.optim.Optimizer, loss,
+    def __init__(self, eeg_encoder: torch.nn.Module, image_encoder: torch.nn.Module, optimizer: torch.optim.Optimizer, loss,
                  save_path, filename, device='cuda:0', **kwargs):
 
         self.device = device
 
-        self.model = model.to(device)
+        self.eeg_encoder = eeg_encoder.to(device)
+        self.image_encoder = image_encoder.to(device)
+
         self.loss = loss.to(device)
         self.loss_scaler = ut.NativeScalerWithGradNormCount()
         self.optimizer = optimizer
-        self.accuracy = Accuracy(task='multiclass', num_classes=kwargs["num_classes"])
 
         self.epochs = kwargs['epochs']
         self.mixed_precision = kwargs['mixed_precision']
@@ -193,36 +196,32 @@ class BimodalTrainer:
             print(f"Epoch {epoch}/{self.epochs}.")
             steps = 0
             loss_epoch = []
-            y_true = []
-            y_pred = []
-            self.model.train()
+            self.eeg_encoder.train()
+            self.image_encoder.train()
             progress_bar = tqdm(train_data_loader)
-            for data, y in progress_bar:
+            for data, _ in progress_bar:
 
                 # adjust learning rate
                 ut.adjust_learning_rate(self.optimizer, steps / len(train_data_loader) + epoch,
                                         warmup_epochs=self.warmup_epochs, num_epoch=self.epochs,
                                         lr=self.lr, min_lr=self.min_lr)
 
-                z1, z2 = data
-
                 self.optimizer.zero_grad()
 
-                z1, z2 = z1.to(self.device, non_blocking=True), z2.to(self.device, non_blocking=True)
-                y = y.to(self.device, non_blocking=True)
+                eeg, image = data
+                eeg, image = eeg.to(self.device, non_blocking=True), image.to(self.device, non_blocking=True)
 
-                with torch.autocast(device_type=self.device, enabled=self.mixed_precision):
-                    preds = self.model(x)
-                    loss = self.loss(preds, y)
+                eeg = F.normalize(eeg, p=2, dim=-1)
+                image = F.normalize(image, p=2, dim=-1)
+
+                with torch.autocast(device_type="cuda" if self.device.startswith("cuda") else "cpu", enabled=self.mixed_precision):
+                    z_i, _ = self.eeg_encoder(eeg)
+                    z_j = self.image_encoder(image)
+                    loss = self.loss(z_i, z_j)
 
                 loss_epoch.append(loss.item())
-                y_true.extend(y)
-                y_pred.extend(torch.sigmoid(preds))
 
-                self.loss_scaler(loss, self.optimizer, parameters=self.model.parameters(), clip_grad=self.clip_grad)
-                with torch.no_grad():
-                    train_acc = self.accuracy(torch.stack(y_pred).detach().cpu().float(),
-                                              torch.stack(y_true).detach().cpu())
+                self.loss_scaler(loss, self.optimizer, parameters=itertools.chain(self.eeg_encoder.parameters(), self.image_encoder.parameters()), clip_grad=self.clip_grad)
 
                 if self.device == torch.device('cuda:0'):
                     self.lr = self.optimizer.param_groups[0]["lr"]
@@ -231,32 +230,28 @@ class BimodalTrainer:
 
             train_loss = np.mean(loss_epoch)
 
-            val_loss, val_acc = self.evaluate(self.model, val_data_loader)
-            if val_loss < best_loss:
-                best_loss = val_loss
-                patience = self.patience
-                best_model = {
-                    'epoch': epoch,
-                    'model_state_dict': copy.deepcopy(self.model.state_dict()),
-                    'optimizer_state_dict': copy.deepcopy(self.optimizer.state_dict()),
-                    'val_loss': val_loss,
-                    'val_acc': val_acc,
-                }
-            else:
-                patience -= 1
+            val_loss = self.evaluate(self.eeg_encoder, self.image_encoder, val_data_loader)
+            # if val_loss < best_loss:
+            #     best_loss = val_loss
+            #     patience = self.patience
+            #     best_model = {
+            #         'epoch': epoch,
+            #         'model_state_dict': copy.deepcopy(self.eeg_encoder.state_dict()),
+            #         'optimizer_state_dict': copy.deepcopy(self.optimizer.state_dict()),
+            #         'val_loss': val_loss,
+            #     }
+            # else:
+            #     patience -= 1
 
-            if patience == 0:
-                break
+            # if patience == 0:
+            #     break
 
             print(f'Epoch: {epoch}')
-            print(f'Training Acc.: {train_acc}| Training Loss: {train_loss}')
-            print(f'Validation Acc.: {val_acc}| Validation Loss: {val_loss}')
+            print(f'Training Loss: {train_loss}| Validation Loss: {val_loss}')
 
             wandb.log({
                 "train_loss": train_loss,
                 "val_loss": val_loss,
-                "train_acc": train_acc,
-                "val_acc": val_acc
             })
 
         print("Finished training.")
@@ -265,10 +260,9 @@ class BimodalTrainer:
         if best_model is None:
             best_model = {
                 'epoch': self.epochs,
-                'model_state_dict': copy.deepcopy(self.model.state_dict()),
+                'model_state_dict': copy.deepcopy(self.eeg_encoder.state_dict()),
                 'optimizer_state_dict': copy.deepcopy(self.optimizer.state_dict()),
                 'val_loss': val_loss,
-                'val_acc': val_acc,
             }
 
         print(f"Best Validation Loss = {best_model['val_loss']} (Epoch = {best_model['epoch']})")
@@ -282,27 +276,27 @@ class BimodalTrainer:
 
         return best_model
 
-    def evaluate(self, model, dataloader):
+    def evaluate(self, eeg_encoder, image_encoder, dataloader):
 
-        model.eval()
+        eeg_encoder.eval()
+        image_encoder.eval()
         with torch.no_grad():
 
             loss_epoch = []
-            y_true = []
-            y_pred = []
             progress_bar = tqdm(dataloader)
             for data, y in progress_bar:
-                x = data
-                x = x.to(self.device, non_blocking=True)
-                y = y.to(self.device, non_blocking=True)
-                with torch.autocast(device_type=self.device, enabled=self.mixed_precision):
-                    preds = self.model(x)
-                    loss = self.loss(preds, y)
-                loss_epoch.append(loss.item())
-                y_true.extend(y)
-                y_pred.extend(torch.sigmoid(preds))
-            mean_loss_epoch = np.mean(loss_epoch)
-            acc = self.accuracy(torch.stack(y_pred).detach().cpu().float(),
-                                torch.stack(y_true).detach().cpu())
+                eeg, image = data
+                eeg, image = eeg.to(self.device, non_blocking=True), image.to(self.device, non_blocking=True)
+                
+                eeg = F.normalize(eeg, p=2, dim=-1)
+                image = F.normalize(image, p=2, dim=-1)
 
-        return mean_loss_epoch, acc 
+                with torch.autocast(device_type="cuda" if self.device.startswith("cuda") else "cpu", enabled=self.mixed_precision):
+                    z_i, _ = self.eeg_encoder(eeg)
+                    z_j = self.image_encoder(image)
+                    loss = self.loss(z_i, z_j)
+                loss_epoch.append(loss.item())
+                
+            mean_loss_epoch = np.mean(loss_epoch)
+            
+        return mean_loss_epoch

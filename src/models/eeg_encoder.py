@@ -65,7 +65,7 @@ class EEGEncoder(nn.Module): # TODO: now every architecture has a classification
 
         elif backbone == 'lstm':
             self.eeg_backbone = eeg_architectures.lstm(input_size=n_channels, lstm_size=kwargs['lstm_size'],
-                                           lstm_layers=kwargs['lstm_layers'], device=device).to(device)
+                                           lstm_layers=kwargs['lstm_layers'], device=device)
             print(get_graph_node_names(self.eeg_backbone))
         elif backbone == 'resnet1d':
             self.eeg_backbone = eeg_architectures.ResNet1d(
@@ -97,7 +97,7 @@ class EEGEncoder(nn.Module): # TODO: now every architecture has a classification
         out = out.view(out.size(0), -1)
         embedding = self.repr_layer(out)
         
-        return out.squeeze(dim=1), embedding.squeeze(dim=1)
+        return embedding.squeeze(dim=1), out.squeeze(dim=1)
 
 
 if __name__ == "__main__":

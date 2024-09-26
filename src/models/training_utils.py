@@ -1,4 +1,5 @@
 import torch
+import torch.nn as nn
 from torch.utils.data import DataLoader
 from torch import inf
 import matplotlib.pyplot as plt
@@ -108,3 +109,24 @@ def plot_recon_figures(recon_model, curr_device, dataset, output_path, num_figur
     if logger is not None:
         logger.log_image('reconst', fig)
     plt.close(fig)
+
+
+class CLIPLoss(torch.nn.Module):
+
+    def __init__(self, temperature: float = 0.07):
+        super().__init__()
+        self.temperature = temperature
+        self.logit_scale = nn.Parameter(torch.ones([]) * torch.log(torch.tensor(1 / temperature)))
+
+    def forward(self, z_i: torch.Tensor, z_j: torch.Tensor):
+        logit_scale = torch.exp(self.logit_scale)
+        z_i_logits = (z_i @ z_j.T) * logit_scale
+        z_j_logits = z_i_logits.T
+
+        batch_size = z_i.shape[0]
+        labels = torch.arange(batch_size, dtype=torch.long, device=z_i.device)
+
+        loss_ij = nn.functional.cross_entropy(z_i_logits, labels)
+        loss_ji = nn.functional.cross_entropy(z_j_logits, labels)
+
+        return (loss_ij + loss_ji) / 2

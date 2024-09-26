@@ -300,7 +300,6 @@ class SpatialBlock(nn.Module):
 
         for layer in self.layers:
             out = layer(x)
-            print(out.shape)
             features.append(out)
 
         out = torch.cat(features, 1)

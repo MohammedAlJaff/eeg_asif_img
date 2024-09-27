@@ -50,13 +50,14 @@ def load_dataset(dataset_name, data_path, **kwargs):
             "t_h": 0.8,
             "fs": 128,  # I have changed this from 100 to 128 in the Dataset description
             "n_samples": 128,
-            "n_channels": 16,
+            "n_channels": 17,
             "n_classes": 1654,
         }
         dataset = eimg.ThingsEEG2(
             data_path=data_path,
             subject_id=kwargs['sid'],
-            load_img=kwargs['load_img']
+            load_img=kwargs['load_img'],
+            pretrain_eeg=kwargs['pretrain_eeg']
         )
     else: 
         raise NotImplementedError

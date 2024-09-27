@@ -22,6 +22,7 @@ import pickle
 import argparse
 import yaml
 import zipfile
+from itertools import combinations
 
 try:
     from torchvision.transforms import InterpolationMode
@@ -307,9 +308,11 @@ class ThingsEEG2(Dataset):
         subject_id,
         img_size=224,
         load_img=False,
+        pretrain_eeg=False,
         download=False,
         ):
 
+        self.pretrain_eeg = pretrain_eeg
         self.load_img = load_img
         self.img_transform = _transform(img_size)
         data_path = os.path.join(data_path, "things_eeg_2")
@@ -343,9 +346,9 @@ class ThingsEEG2(Dataset):
         self.eeg_data_test = np.load(os.path.join(self.eeg_parent_dir,
                 'preprocessed_eeg_test.npy'), allow_pickle=True).item() 
 
-        print('\nEEG channels:')
-        for c,chan in enumerate(self.eeg_data_train['ch_names']):
-            print(c, chan)
+        # print('\nEEG channels:')
+        # for c,chan in enumerate(self.eeg_data_train['ch_names']):
+        #     print(c, chan)
         
         # img_data['train_img_concepts'] defines the classes 
         self.img_parent_dir  = os.path.join(data_path, 'images')
@@ -356,6 +359,18 @@ class ThingsEEG2(Dataset):
         tmp_labels = self.img_metadata['train_img_concepts']
         self.labels = [int(l.split("_")[0])-1 for l in tmp_labels]
 
+        if self.pretrain_eeg:
+            n, r, c, t = self.eeg_data.shape
+
+            comb_indices = np.array(list(combinations(range(r), 2)))  # Shape: (6, 2)
+            batch_indices = np.arange(n)[:, np.newaxis, np.newaxis]  # Shape: (16540, 1, 1)
+            comb_indices_expanded = comb_indices[np.newaxis, :, :]  # Shape: (1, 6, 2)
+
+            new_arr = self.eeg_data[batch_indices, comb_indices_expanded]  # Shape: (16540, 6, 2, 17, 100)
+            new_arr = new_arr.reshape(-1, 2, c, t)
+            self.eeg_data = new_arr
+            new_labels = np.repeat(np.array(self.labels), 6)
+            self.labels = list(new_labels)
 
     def __len__(self):
         return len(self.eeg_data)
@@ -373,25 +388,27 @@ class ThingsEEG2(Dataset):
         x2 = np.linspace(0, 1, 128)
         f = interp1d(x1, eeg, axis=-1)
         eeg = f(x2)
-
+        # TODO EEGChannelNet only works with even number of channels but that's not the only issue
         if self.load_img:
             train_img_file = os.path.join(self.img_parent_dir, 'training_images', 
                     self.img_metadata['train_img_concepts'][item], self.img_metadata['train_img_files'][item])
             pair = Image.open(train_img_file).convert('RGB')
-            sample = (torch.from_numpy(np.mean(eeg[:, :, 1:, :], axis=1)).to(torch.float), (self.img_transform(pair).to(torch.float)))
+            sample = (torch.from_numpy(np.mean(eeg[:, :, :, :], axis=1)).to(torch.float), (self.img_transform(pair).to(torch.float)))
+            label = self.labels[item]
+        elif self.pretrain_eeg:
+            sample = (torch.from_numpy(eeg[:, 0, :, :]).to(torch.float), torch.from_numpy(eeg[:, 1, :, :]).to(torch.float))
             label = self.labels[item]
         else:
-            sample = torch.from_numpy(np.mean(eeg[:, :, 1:, :], axis=1)).to(torch.float)
+            sample = torch.from_numpy(np.mean(eeg[:, :, :, :], axis=1)).to(torch.float)
             label = self.labels[item]
         # img_file = self.image_files[self.indices[item]].copy()
-
         return sample, label
 
         
 
 
 if __name__ == "__main__":
-    selected = "spampinato"
+    selected = "things-eeg-2"
     eeg_path = "/proj/rep-learning-robotics/users/x_nonra/eeg_asif_img/data/"
     if selected == "spampinato_all":
         data_loaded = EEGImagenet(
@@ -419,7 +436,8 @@ if __name__ == "__main__":
             data_path=eeg_path,
             subject_id=1,
             download=False,
-            load_img=True,
+            load_img=False,
+            pretrain_eeg=True,
         )
     print(len(data_loaded))
     x, l = data_loaded[0]

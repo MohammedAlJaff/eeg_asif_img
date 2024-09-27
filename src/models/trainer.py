@@ -168,7 +168,7 @@ class BimodalTrainer:
         self.device = device
 
         self.eeg_encoder = eeg_encoder.to(device)
-        self.image_encoder = image_encoder.to(device)
+        self.image_encoder = image_encoder.to(device) if image_encoder is not None else None
 
         self.loss = loss.to(device)
         self.loss_scaler = ut.NativeScalerWithGradNormCount()
@@ -197,7 +197,8 @@ class BimodalTrainer:
             steps = 0
             loss_epoch = []
             self.eeg_encoder.train()
-            self.image_encoder.train()
+            if self.image_encoder is not None:
+                self.image_encoder.train()
             progress_bar = tqdm(train_data_loader)
             for data, _ in progress_bar:
 
@@ -216,12 +217,18 @@ class BimodalTrainer:
 
                 with torch.autocast(device_type="cuda" if self.device.startswith("cuda") else "cpu", enabled=self.mixed_precision):
                     z_i, _ = self.eeg_encoder(eeg)
-                    z_j = self.image_encoder(image)
+                    if self.image_encoder is not None:
+                        z_j = self.image_encoder(image)
+                    else:
+                        z_j, _ = self.eeg_encoder(image)
                     loss = self.loss(z_i, z_j)
 
                 loss_epoch.append(loss.item())
 
-                self.loss_scaler(loss, self.optimizer, parameters=itertools.chain(self.eeg_encoder.parameters(), self.image_encoder.parameters()), clip_grad=self.clip_grad)
+                if self.image_encoder is not None:
+                    self.loss_scaler(loss, self.optimizer, parameters=itertools.chain(self.eeg_encoder.parameters(), self.image_encoder.parameters()), clip_grad=self.clip_grad)
+                else:
+                    self.loss_scaler(loss, self.optimizer, parameters=self.eeg_encoder.parameters(), clip_grad=self.clip_grad)
 
                 if self.device == torch.device('cuda:0'):
                     self.lr = self.optimizer.param_groups[0]["lr"]
@@ -231,20 +238,20 @@ class BimodalTrainer:
             train_loss = np.mean(loss_epoch)
 
             val_loss = self.evaluate(self.eeg_encoder, self.image_encoder, val_data_loader)
-            # if val_loss < best_loss:
-            #     best_loss = val_loss
-            #     patience = self.patience
-            #     best_model = {
-            #         'epoch': epoch,
-            #         'model_state_dict': copy.deepcopy(self.eeg_encoder.state_dict()),
-            #         'optimizer_state_dict': copy.deepcopy(self.optimizer.state_dict()),
-            #         'val_loss': val_loss,
-            #     }
-            # else:
-            #     patience -= 1
+            if val_loss < best_loss:
+                best_loss = val_loss
+                patience = self.patience
+                best_model = {
+                    'epoch': epoch,
+                    'model_state_dict': copy.deepcopy(self.eeg_encoder.state_dict()),
+                    'optimizer_state_dict': copy.deepcopy(self.optimizer.state_dict()),
+                    'val_loss': val_loss,
+                }
+            else:
+                patience -= 1
 
-            # if patience == 0:
-            #     break
+            if patience == 0:
+                break
 
             print(f'Epoch: {epoch}')
             print(f'Training Loss: {train_loss}| Validation Loss: {val_loss}')
@@ -279,7 +286,8 @@ class BimodalTrainer:
     def evaluate(self, eeg_encoder, image_encoder, dataloader):
 
         eeg_encoder.eval()
-        image_encoder.eval()
+        if image_encoder is not None:
+            image_encoder.eval()
         with torch.no_grad():
 
             loss_epoch = []
@@ -292,8 +300,11 @@ class BimodalTrainer:
                 image = F.normalize(image, p=2, dim=-1)
 
                 with torch.autocast(device_type="cuda" if self.device.startswith("cuda") else "cpu", enabled=self.mixed_precision):
-                    z_i, _ = self.eeg_encoder(eeg)
-                    z_j = self.image_encoder(image)
+                    z_i, _ = eeg_encoder(eeg)
+                    if image_encoder is not None:
+                        z_j = image_encoder(image)
+                    else:
+                        z_j, _ = eeg_encoder(image)
                     loss = self.loss(z_i, z_j)
                 loss_epoch.append(loss.item())
                 

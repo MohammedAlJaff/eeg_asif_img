@@ -3,6 +3,7 @@ import itertools
 import numpy as np
 import torch
 import torch.nn.functional as F
+import torch.optim as optim
 from torchmetrics import Accuracy
 from torch.utils.data import DataLoader
 from torch.cuda.amp import GradScaler
@@ -19,7 +20,7 @@ class UnimodalTrainer:
         self.device = device
 
         self.model = model.to(device)
-        self.loss = loss.to(device)
+        self.loss = loss.to("cuda" if device.startswith("cuda") else "cpu")
         self.loss_scaler = ut.NativeScalerWithGradNormCount()
         self.optimizer = optimizer
         self.accuracy = Accuracy(task='multiclass', num_classes=kwargs["num_classes"])
@@ -36,7 +37,10 @@ class UnimodalTrainer:
         self.clip_grad = 0.8
 
     def train(self, train_data_loader: DataLoader, val_data_loader: DataLoader):
-        scaler = GradScaler(self.device, enabled=self.mixed_precision)
+        scaler = GradScaler(enabled=self.mixed_precision)
+
+        warmup_scheduler = ut.WarmupScheduler(self.optimizer, self.warmup_epochs, self.lr, start_lr=self.min_lr)
+        lr_scheduler = optim.lr_scheduler.ReduceLROnPlateau(self.optimizer, mode='min', factor=0.1, patience=100)
 
         best_model = None
         best_loss = 10000000
@@ -53,9 +57,9 @@ class UnimodalTrainer:
             for data, y in progress_bar:
 
                 # adjust learning rate
-                ut.adjust_learning_rate(self.optimizer, steps / len(train_data_loader) + epoch,
-                                        warmup_epochs=self.warmup_epochs, num_epoch=self.epochs,
-                                        lr=self.lr, min_lr=self.min_lr)
+                # ut.adjust_learning_rate(self.optimizer, steps / len(train_data_loader) + epoch,
+                #                         warmup_epochs=self.warmup_epochs, num_epoch=self.epochs,
+                #                         lr=self.lr, min_lr=self.min_lr)
 
                 x = data
 
@@ -72,13 +76,14 @@ class UnimodalTrainer:
                 y_true.extend(y)
                 y_pred.extend(torch.sigmoid(preds))
 
-                self.loss_scaler(loss, self.optimizer, parameters=self.model.parameters(), clip_grad=self.clip_grad)
+                # self.loss_scaler(loss, self.optimizer, parameters=self.model.parameters(), clip_grad=self.clip_grad)
+                scaler.scale(loss).backward()
+                scaler.step(self.optimizer)
+                scaler.update()
+
                 with torch.no_grad():
                     train_acc = self.accuracy(torch.stack(y_pred).detach().cpu().float(),
                                               torch.stack(y_true).detach().cpu())
-
-                if self.device == torch.device('cuda:0'):
-                    self.lr = self.optimizer.param_groups[0]["lr"]
 
                 steps += 1
 
@@ -101,6 +106,16 @@ class UnimodalTrainer:
             if patience == 0:
                 break
 
+            # Warmup phase
+            if epoch <= self.warmup_epochs:
+                warmup_scheduler.step()  # Adjust learning rate during warmup
+                current_lr = self.optimizer.param_groups[0]['lr']
+            
+            # After warmup, apply ReduceLROnPlateau scheduler
+            if epoch > self.warmup_epochs:
+                lr_scheduler.step(val_loss)  # Reduce LR if val_loss does not improve
+                current_lr = self.optimizer.param_groups[0]['lr']
+
             print(f'Epoch: {epoch}')
             print(f'Training Acc.: {train_acc}| Training Loss: {train_loss}')
             print(f'Validation Acc.: {val_acc}| Validation Loss: {val_loss}')
@@ -109,7 +124,8 @@ class UnimodalTrainer:
                 "train_loss": train_loss,
                 "val_loss": val_loss,
                 "train_acc": train_acc,
-                "val_acc": val_acc
+                "val_acc": val_acc,
+                "lr": current_lr
             })
 
         print("Finished training.")
@@ -170,7 +186,7 @@ class BimodalTrainer:
         self.eeg_encoder = eeg_encoder.to(device)
         self.image_encoder = image_encoder.to(device) if image_encoder is not None else None
 
-        self.loss = loss.to(device)
+        self.loss = loss.to("cuda" if device.startswith("cuda") else "cpu")
         self.loss_scaler = ut.NativeScalerWithGradNormCount()
         self.optimizer = optimizer
 
@@ -182,11 +198,14 @@ class BimodalTrainer:
 
         self.save_path = save_path
         self.filename = filename
-        self.patience = 100
+        self.patience = 150
         self.clip_grad = 0.8
 
     def train(self, train_data_loader: DataLoader, val_data_loader: DataLoader):
-        scaler = GradScaler(self.device, enabled=self.mixed_precision)
+        scaler = GradScaler(enabled=self.mixed_precision)
+
+        warmup_scheduler = ut.WarmupScheduler(self.optimizer, self.warmup_epochs, self.lr, start_lr=self.min_lr)
+        lr_scheduler = optim.lr_scheduler.ReduceLROnPlateau(self.optimizer, mode='min', factor=0.1, patience=100)
 
         best_model = None
         best_loss = 10000000
@@ -198,14 +217,15 @@ class BimodalTrainer:
             loss_epoch = []
             self.eeg_encoder.train()
             if self.image_encoder is not None:
-                self.image_encoder.train()
+                # self.image_encoder.train()
+                self.image_encoder.eval()
             progress_bar = tqdm(train_data_loader)
             for data, _ in progress_bar:
 
                 # adjust learning rate
-                ut.adjust_learning_rate(self.optimizer, steps / len(train_data_loader) + epoch,
-                                        warmup_epochs=self.warmup_epochs, num_epoch=self.epochs,
-                                        lr=self.lr, min_lr=self.min_lr)
+                # ut.adjust_learning_rate(self.optimizer, steps / len(train_data_loader) + epoch,
+                #                         warmup_epochs=self.warmup_epochs, num_epoch=self.epochs,
+                #                         lr=self.lr, min_lr=self.min_lr)
 
                 self.optimizer.zero_grad()
 
@@ -216,19 +236,23 @@ class BimodalTrainer:
                 image = F.normalize(image, p=2, dim=-1)
 
                 with torch.autocast(device_type="cuda" if self.device.startswith("cuda") else "cpu", enabled=self.mixed_precision):
-                    z_i, _ = self.eeg_encoder(eeg)
+                    z_i = self.eeg_encoder(eeg)
                     if self.image_encoder is not None:
                         z_j = self.image_encoder(image)
                     else:
-                        z_j, _ = self.eeg_encoder(image)
+                        z_j = self.eeg_encoder(image)
                     loss = self.loss(z_i, z_j)
 
                 loss_epoch.append(loss.item())
 
-                if self.image_encoder is not None:
-                    self.loss_scaler(loss, self.optimizer, parameters=itertools.chain(self.eeg_encoder.parameters(), self.image_encoder.parameters()), clip_grad=self.clip_grad)
-                else:
-                    self.loss_scaler(loss, self.optimizer, parameters=self.eeg_encoder.parameters(), clip_grad=self.clip_grad)
+                # if self.image_encoder is not None:
+                #     self.loss_scaler(loss, self.optimizer, parameters=itertools.chain(self.eeg_encoder.parameters(), self.image_encoder.parameters()), clip_grad=self.clip_grad)
+                # else:
+                #     self.loss_scaler(loss, self.optimizer, parameters=self.eeg_encoder.parameters(), clip_grad=self.clip_grad)
+
+                scaler.scale(loss).backward()
+                scaler.step(self.optimizer)
+                scaler.update()
 
                 if self.device == torch.device('cuda:0'):
                     self.lr = self.optimizer.param_groups[0]["lr"]
@@ -253,12 +277,23 @@ class BimodalTrainer:
             if patience == 0:
                 break
 
+            # Warmup phase
+            if epoch <= self.warmup_epochs:
+                warmup_scheduler.step()  # Adjust learning rate during warmup
+                current_lr = self.optimizer.param_groups[0]['lr']
+            
+            # After warmup, apply ReduceLROnPlateau scheduler
+            if epoch > self.warmup_epochs:
+                lr_scheduler.step(val_loss)  # Reduce LR if val_loss does not improve
+                current_lr = self.optimizer.param_groups[0]['lr']
+
             print(f'Epoch: {epoch}')
             print(f'Training Loss: {train_loss}| Validation Loss: {val_loss}')
 
             wandb.log({
                 "train_loss": train_loss,
                 "val_loss": val_loss,
+                "lr": current_lr
             })
 
         print("Finished training.")
@@ -300,11 +335,11 @@ class BimodalTrainer:
                 image = F.normalize(image, p=2, dim=-1)
 
                 with torch.autocast(device_type="cuda" if self.device.startswith("cuda") else "cpu", enabled=self.mixed_precision):
-                    z_i, _ = eeg_encoder(eeg)
+                    z_i = eeg_encoder(eeg)
                     if image_encoder is not None:
                         z_j = image_encoder(image)
                     else:
-                        z_j, _ = eeg_encoder(image)
+                        z_j = eeg_encoder(image)
                     loss = self.loss(z_i, z_j)
                 loss_epoch.append(loss.item())
                 

@@ -8,7 +8,7 @@ import torch.nn as nn
 import torchvision
 from collections import OrderedDict
 from torchvision.models.feature_extraction import create_feature_extractor, get_graph_node_names
-from src.models import eeg_architectures
+from src.models import eeg_architectures, eeg_encoder
 
 
 class EEGClassifier(nn.Module):
@@ -17,6 +17,7 @@ class EEGClassifier(nn.Module):
                  n_channels: int = 96,
                  n_samples: int = 512,
                  n_classes: int = 40,
+                 pretrained_encoder: nn.Module = None,
                  **kwargs
                  ):
         super(EEGClassifier, self).__init__()
@@ -34,7 +35,13 @@ class EEGClassifier(nn.Module):
         d = 2
         f2 = 16
 
-        if backbone == 'eegnet':
+        if pretrained_encoder is not None:
+            encoder = pretrained_encoder
+            for param in encoder.parameters():
+                param.requires_grad = False
+            mlp_head = eeg_encoder.ClassificationHead(input_size=encoder.embed_dim, n_classes=n_classes, n_layers=1, hidden_size=encoder.embed_dim)
+            self.eeg_backbone = torch.nn.Sequential(OrderedDict([('encoder', encoder), ('cls', mlp_head)]))
+        elif backbone == 'eegnet':
             print('n_channels = ', n_channels)
             print('n_samples = ', n_samples)
             self.eeg_backbone = eeg_architectures.EEGNet(n_samples=n_samples, n_channels=n_channels, n_classes=n_classes)

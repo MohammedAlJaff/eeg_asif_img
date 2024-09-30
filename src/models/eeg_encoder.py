@@ -27,6 +27,7 @@ class EEGEncoder(nn.Module): # TODO: now every architecture has a classification
         self.n_channels = n_channels
         self.n_samples = n_samples
         self.backbone_type = backbone
+        self.embed_dim = embed_dim
         self.checkpoint = torch.load(model_path)['model_state_dict'] if model_path is not None else None
         
         if self.checkpoint is not None:
@@ -97,7 +98,36 @@ class EEGEncoder(nn.Module): # TODO: now every architecture has a classification
         out = out.view(out.size(0), -1)
         embedding = self.repr_layer(out)
         
-        return embedding.squeeze(dim=1), out.squeeze(dim=1)
+        return embedding.squeeze(dim=1)
+
+class ClassificationHead(nn.Module):
+    def __init__(
+        self,
+        input_size,
+        n_classes,
+        n_layers,
+        hidden_size,
+        **kwargs
+        ):
+
+        super().__init__()
+
+        if n_layers == 1:
+            self.mlp = torch.nn.Linear(input_size, n_classes)
+        else:
+            mlp_head_list = []
+            feature_dim = input_dim
+            for i in range(n_layers - 1):
+                mlp_head_list.append(('ln' + str(i+1), torch.nn.Linear(feature_dim, hidden_dim)))
+                mlp_head_list.append(('bn' + str(i+1), torch.nn.BatchNorm1d(hidden_dim))),
+                mlp_head_list.append(('relu' + str(i+1), torch.nn.ReLU())),
+                feature_dim = hidden_dim
+            mlp_head_list.append(('lnout', torch.nn.Linear(hidden_dim, n_classes)))
+            self.mlp = torch.nn.Sequential(OrderedDict(mlp_head_list))
+    
+    def forward(self, x):
+        x = self.mlp(x)
+        return x
 
 
 if __name__ == "__main__":

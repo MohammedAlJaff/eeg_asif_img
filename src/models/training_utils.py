@@ -111,6 +111,32 @@ def plot_recon_figures(recon_model, curr_device, dataset, output_path, num_figur
     plt.close(fig)
 
 
+class WarmupScheduler:
+    def __init__(self, optimizer, warmup_epochs, max_lr, start_lr=1e-6):
+        """
+        Warmup scheduler for the first `warmup_epochs`.
+        
+        Args:
+            optimizer (torch.optim.Optimizer): Optimizer for which to schedule the learning rate.
+            warmup_epochs (int): Number of epochs to warm up the learning rate.
+            max_lr (float): Maximum learning rate after warmup.
+            start_lr (float): Starting learning rate at the beginning of warmup.
+        """
+        self.optimizer = optimizer
+        self.warmup_epochs = warmup_epochs
+        self.start_lr = start_lr
+        self.max_lr = max_lr
+        self.current_epoch = 0
+
+    def step(self):
+        """Update the learning rate for the current epoch."""
+        self.current_epoch += 1
+        if self.current_epoch <= self.warmup_epochs:
+            # Linearly increase the learning rate during warmup
+            lr = self.start_lr + (self.max_lr - self.start_lr) * (self.current_epoch / self.warmup_epochs)
+            for param_group in self.optimizer.param_groups:
+                param_group['lr'] = lr
+
 class CLIPLoss(torch.nn.Module):
 
     def __init__(self, temperature: float = 0.07):

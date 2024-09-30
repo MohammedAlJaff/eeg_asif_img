@@ -63,7 +63,7 @@ def load_dataset(dataset_name, data_path, **kwargs):
         raise NotImplementedError
     return dataset, data_configs
 
-def get_embeddings(model, data_loader, modality="eeg", joint_embedding=False, device='cuda'):
+def get_embeddings(model, data_loader, modality="eeg", device='cuda'):
     
     progress_bar = tqdm(data_loader)
     embeddings = None
@@ -77,13 +77,7 @@ def get_embeddings(model, data_loader, modality="eeg", joint_embedding=False, de
                 _, x = data
             x = x.to(device)
             y = y.to(device)
-            if modality == "eeg":
-                if joint_embedding:
-                    e, _ = model(x)
-                else:
-                    _, e = model(x)
-            else:
-                e = model(x)
+            e = model(x)
             e = torch.nn.functional.normalize(e, p=2, dim=-1)
             if embeddings is None:
                 embeddings = e.detach().cpu().numpy()

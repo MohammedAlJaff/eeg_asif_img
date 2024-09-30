@@ -30,21 +30,19 @@ class ImageEncoder(nn.Module):
             assert embed_dim is not None, "Embed_dim must be specified when adding FC layer"
             self.fc = nn.Linear(self.image_backbone.embedding_size, embed_dim)
             self.embed_dim = embed_dim
-            # Freeze the backbone parameters and only train the FC layer
-            for param in self.image_backbone.parameters():
-                param.requires_grad = False
+            
         else:
             self.fc = None
             self.embed_dim = self.image_backbone.embedding_size
-            # If no FC layer, freeze all parameters (including the backbone)
-            for param in self.parameters():
-                param.requires_grad = False
+           
+        for param in self.image_backbone.parameters():
+            param.requires_grad = False
 
         print("image embedding size = ", self.embed_dim)
 
     def forward(self, x):
         # Forward pass through the backbone encoder
-        x = self.image_backbone.encode(x, alr_preprocessed=True)
+        x = self.image_backbone(x)
         # If the FC layer exists, pass through it
         if self.fc is not None:
             x = self.fc(x)

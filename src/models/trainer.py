@@ -232,8 +232,8 @@ class BimodalTrainer:
                 eeg, image = data
                 eeg, image = eeg.to(self.device, non_blocking=True), image.to(self.device, non_blocking=True)
 
-                eeg = F.normalize(eeg, p=2, dim=-1)
-                image = F.normalize(image, p=2, dim=-1)
+                # eeg = F.normalize(eeg, p=2, dim=-1)
+                # image = F.normalize(image, p=2, dim=-1)
 
                 with torch.autocast(device_type="cuda" if self.device.startswith("cuda") else "cpu", enabled=self.mixed_precision):
                     z_i = self.eeg_encoder(eeg)
@@ -241,6 +241,8 @@ class BimodalTrainer:
                         z_j = self.image_encoder(image)
                     else:
                         z_j = self.eeg_encoder(image)
+                    z_i = F.normalize(z_i, p=2, dim=-1)
+                    z_j = F.normalize(z_j, p=2, dim=-1)
                     loss = self.loss(z_i, z_j)
 
                 loss_epoch.append(loss.item())
@@ -331,8 +333,8 @@ class BimodalTrainer:
                 eeg, image = data
                 eeg, image = eeg.to(self.device, non_blocking=True), image.to(self.device, non_blocking=True)
                 
-                eeg = F.normalize(eeg, p=2, dim=-1)
-                image = F.normalize(image, p=2, dim=-1)
+                # eeg = F.normalize(eeg, p=2, dim=-1)
+                # image = F.normalize(image, p=2, dim=-1)
 
                 with torch.autocast(device_type="cuda" if self.device.startswith("cuda") else "cpu", enabled=self.mixed_precision):
                     z_i = eeg_encoder(eeg)
@@ -340,6 +342,9 @@ class BimodalTrainer:
                         z_j = image_encoder(image)
                     else:
                         z_j = eeg_encoder(image)
+                    z_i = F.normalize(z_i, p=2, dim=-1)
+                    z_j = F.normalize(z_j, p=2, dim=-1)
+
                     loss = self.loss(z_i, z_j)
                 loss_epoch.append(loss.item())
                 

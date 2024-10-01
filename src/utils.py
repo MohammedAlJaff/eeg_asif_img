@@ -53,11 +53,14 @@ def load_dataset(dataset_name, data_path, **kwargs):
             "n_channels": 17,
             "n_classes": 1654,
         }
+        test = kwargs['test'] if 'test' in kwargs.keys() else False
+        print("TEST = ", test)
         dataset = eimg.ThingsEEG2(
             data_path=data_path,
             subject_id=kwargs['sid'],
             load_img=kwargs['load_img'],
-            pretrain_eeg=kwargs['pretrain_eeg']
+            pretrain_eeg=kwargs['pretrain_eeg'],
+            test=test
         )
     else: 
         raise NotImplementedError

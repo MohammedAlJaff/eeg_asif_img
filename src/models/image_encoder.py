@@ -4,7 +4,7 @@ sys.path.append("/proj/rep-learning-robotics/users/x_nonra/eeg_asif_img")
 
 import torch.nn as nn
 
-from src.models.image_architectures import VIT, DINO, DEIT
+from src.models.image_architectures import VIT, DINO, DEIT, CLIP_IMG
 
 class ImageEncoder(nn.Module):
     def __init__(
@@ -22,6 +22,8 @@ class ImageEncoder(nn.Module):
             self.image_backbone = DINO()
         elif backbone == "DeiT":
             self.image_backbone = DEIT()
+        elif backbone == "CLIP_IMG":
+            self.image_backbone = CLIP_IMG()
         else:
             raise NotImplementedError
 

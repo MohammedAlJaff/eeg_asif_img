@@ -309,12 +309,14 @@ class ThingsEEG2(Dataset):
         img_size=224,
         load_img=False,
         pretrain_eeg=False,
+        test=False,
         download=False,
         ):
 
         self.pretrain_eeg = pretrain_eeg
         self.load_img = load_img
         self.img_transform = _transform(img_size)
+        self.test = test
         data_path = os.path.join(data_path, "things_eeg_2")
         os.makedirs(data_path, exist_ok=True)
 
@@ -355,8 +357,14 @@ class ThingsEEG2(Dataset):
         self.img_metadata = np.load(os.path.join(self.img_parent_dir, 'image_metadata.npy'),
 	            allow_pickle=True).item()
 
-        self.eeg_data = self.eeg_data_train['preprocessed_eeg_data']
-        tmp_labels = self.img_metadata['train_img_concepts']
+        if not self.test:
+            self.eeg_data = self.eeg_data_train['preprocessed_eeg_data']
+            tmp_labels = self.img_metadata['train_img_concepts']
+        else:
+            self.eeg_data = self.eeg_data_test['preprocessed_eeg_data']
+            tmp_labels = self.img_metadata['test_img_concepts']
+            print(len(self.eeg_data))
+
         self.labels = [int(l.split("_")[0])-1 for l in tmp_labels]
 
         if self.pretrain_eeg:
@@ -390,9 +398,13 @@ class ThingsEEG2(Dataset):
         eeg = f(x2)
         # TODO EEGChannelNet only works with even number of channels but that's not the only issue
         if self.load_img:
-            train_img_file = os.path.join(self.img_parent_dir, 'training_images', 
-                    self.img_metadata['train_img_concepts'][item], self.img_metadata['train_img_files'][item])
-            pair = Image.open(train_img_file).convert('RGB')
+            if not self.test:
+                img_file = os.path.join(self.img_parent_dir, 'training_images', 
+                        self.img_metadata['train_img_concepts'][item], self.img_metadata['train_img_files'][item])
+            else:
+                img_file = os.path.join(self.img_parent_dir, 'test_images', 
+                        self.img_metadata['test_img_concepts'][item], self.img_metadata['test_img_files'][item])
+            pair = Image.open(img_file).convert('RGB')
             sample = (torch.from_numpy(np.mean(eeg[:, :, :, :], axis=1)).to(torch.float), (self.img_transform(pair).to(torch.float)))
             label = self.labels[item]
         elif self.pretrain_eeg:

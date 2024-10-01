@@ -1,5 +1,6 @@
 import torch
 from transformers import ViTImageProcessor, ViTForImageClassification, ViTModel, ConvNextFeatureExtractor, ConvNextModel, DeiTImageProcessor, DeiTModel
+from transformers import CLIPImageProcessor, CLIPVisionModelWithProjection, CLIPVisionModel
 
 
 class VIT(torch.nn.Module):
@@ -122,3 +123,42 @@ class DEIT(torch.nn.Module):
                 x = self.model(images)
             x = x.last_hidden_state[:,0,:]
         return x
+
+class CLIP_IMG(torch.nn.Module):
+    """
+    Self-Supervised image encoder based on the original CLIP model from OpenAI.
+    """
+    def __init__(self, model_name: str = "openai/clip-vit-base-patch32", device: str = None, alr_preprocessed: bool = True):
+        """
+        Args:
+            model_name: name of the pretrained model to use
+            device: device to use for inference
+            load_jit: load model just in time (in the encode method)
+        """
+        super().__init__()
+        if not device:
+            self.device = "cuda:0" if torch.cuda.is_available() else "cpu"
+        else:
+            self.device = device
+        self.alr_preprocessed = alr_preprocessed
+        self.model_name = model_name
+        self.feature_extractor = CLIPImageProcessor.from_pretrained(model_name)
+        self.model = CLIPVisionModel.from_pretrained(model_name).to(self.device)
+        self.embedding_size = self.model(torch.zeros(1, 3, 224, 224).to(self.device)).last_hidden_state[:,0,:].shape[1]  # 768
+        
+    def forward(self, images: torch.Tensor) -> torch.Tensor:
+        """
+        Args:
+            images: images to encode
+            alr_preprocessed: whether the images are already preprocessed to tensors
+        Returns:
+            image embeddings
+        """
+        with torch.no_grad():
+            if not self.alr_preprocessed:
+                x = self.feature_extractor(images=images, return_tensors="pt").to(self.device)
+                x = self.model(**x)
+            else:
+                x = self.model(images)
+            x = x.last_hidden_state[:,0,:]
+        return x  # taking the embedding of the CLS token as image representation

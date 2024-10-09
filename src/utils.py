@@ -66,14 +66,14 @@ def load_dataset(dataset_name, data_path, **kwargs):
         raise NotImplementedError
     return dataset, data_configs
 
-def get_embeddings(model, data_loader, modality="eeg", device='cuda'):
+def get_embeddings(model, data_loader, modality="eeg", save=False, save_path=None, device='cuda'):
     
-    progress_bar = tqdm(data_loader)
+    # progress_bar = tqdm(data_loader)
     embeddings = None
     labels = None
     model.eval()
     with torch.no_grad():
-        for data, y in progress_bar:
+        for i, (data, y) in enumerate(data_loader):
             if modality == "eeg":
                 x, _ = data
             else:
@@ -90,6 +90,12 @@ def get_embeddings(model, data_loader, modality="eeg", device='cuda'):
                 labels = np.concatenate((labels, y.detach().cpu().numpy()), axis=0)
             # embeddings.append(e.detach().cpu().numpy())
             # labels.append(y.detach().cpu().numpy())
+    if save:
+        print("Saving the Embeddings")
+        if save_path:
+            np.save(save_path, embeddings)
+        else:
+            np.save("./embeddings.py", embeddings)
     print(embeddings.shape)
     print(labels)
     return embeddings, labels

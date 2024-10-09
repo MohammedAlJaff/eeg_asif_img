@@ -342,43 +342,47 @@ class ThingsEEG2(Dataset):
 
             unzip_nested_files(data_path)
 
-        self.eeg_parent_dir = os.path.join(data_path, 'preprocessed_eeg', 'sub-'+"{:02d}".format(subject_id))
-        self.eeg_data_train = np.load(os.path.join(self.eeg_parent_dir,
-                'preprocessed_eeg_training.npy'), allow_pickle=True).item()
-        self.eeg_data_test = np.load(os.path.join(self.eeg_parent_dir,
-                'preprocessed_eeg_test.npy'), allow_pickle=True).item() 
-
-        # print('\nEEG channels:')
-        # for c,chan in enumerate(self.eeg_data_train['ch_names']):
-        #     print(c, chan)
+        if isinstance(subject_id, int):
+            subject_id = [subject_id]
         
         # img_data['train_img_concepts'] defines the classes 
         self.img_parent_dir  = os.path.join(data_path, 'images')
         self.img_metadata = np.load(os.path.join(self.img_parent_dir, 'image_metadata.npy'),
 	            allow_pickle=True).item()
+        self.img_concepts = self.img_metadata['test_img_concepts'] if self.test else self.img_metadata['train_img_concepts']
+        self.img_files = self.img_metadata['test_img_files'] if self.test else self.img_metadata['train_img_files']
 
-        if not self.test:
-            self.eeg_data = self.eeg_data_train['preprocessed_eeg_data']
-            tmp_labels = self.img_metadata['train_img_concepts']
-        else:
-            self.eeg_data = self.eeg_data_test['preprocessed_eeg_data']
-            tmp_labels = self.img_metadata['test_img_concepts']
-            print(len(self.eeg_data))
+        self.eeg_data_list = []
+        self.labels_list = []
+        
+        for sid in subject_id:
+        
+            eeg_parent_dir = os.path.join(data_path, 'preprocessed_eeg', 'sub-'+"{:02d}".format(sid))
+            eeg_data = np.load(os.path.join(eeg_parent_dir,
+                    'preprocessed_eeg_training.npy' if not self.test else 'preprocessed_eeg_test.npy'), allow_pickle=True).item()
+            subject_eeg_data = eeg_data['preprocessed_eeg_data']
 
-        self.labels = [int(l.split("_")[0])-1 for l in tmp_labels]
+            tmp_labels = self.img_concepts
+            labels = [int(l.split("_")[0])-1 for l in tmp_labels]
 
-        if self.pretrain_eeg:
-            n, r, c, t = self.eeg_data.shape
+            if self.pretrain_eeg:
+                n, r, c, t = subject_eeg_data.shape
 
-            comb_indices = np.array(list(combinations(range(r), 2)))  # Shape: (6, 2)
-            batch_indices = np.arange(n)[:, np.newaxis, np.newaxis]  # Shape: (16540, 1, 1)
-            comb_indices_expanded = comb_indices[np.newaxis, :, :]  # Shape: (1, 6, 2)
+                comb_indices = np.array(list(combinations(range(r), 2)))  # Shape: (6, 2)
+                batch_indices = np.arange(n)[:, np.newaxis, np.newaxis]  # Shape: (16540, 1, 1)
+                comb_indices_expanded = comb_indices[np.newaxis, :, :]  # Shape: (1, 6, 2)
 
-            new_arr = self.eeg_data[batch_indices, comb_indices_expanded]  # Shape: (16540, 6, 2, 17, 100)
-            new_arr = new_arr.reshape(-1, 2, c, t)
-            self.eeg_data = new_arr
-            new_labels = np.repeat(np.array(self.labels), 6)
-            self.labels = list(new_labels)
+                new_arr = subject_eeg_data[batch_indices, comb_indices_expanded]  # Shape: (16540, 6, 2, 17, 100)
+                new_arr = new_arr.reshape(-1, 2, c, t)
+                subject_eeg_data = new_arr
+                new_labels = np.repeat(np.array(labels), 6)
+                labels = list(new_labels)
+
+            self.eeg_data_list.append(subject_eeg_data)
+            self.labels_list.extend(labels)
+        
+        # Concatenate all subjects' EEG data
+        self.eeg_data = np.concatenate(self.eeg_data_list, axis=0)
 
     def __len__(self):
         return len(self.eeg_data)
@@ -398,21 +402,19 @@ class ThingsEEG2(Dataset):
         eeg = f(x2)
         # TODO EEGChannelNet only works with even number of channels but that's not the only issue
         if self.load_img:
-            if not self.test:
-                img_file = os.path.join(self.img_parent_dir, 'training_images', 
-                        self.img_metadata['train_img_concepts'][item], self.img_metadata['train_img_files'][item])
-            else:
-                img_file = os.path.join(self.img_parent_dir, 'test_images', 
-                        self.img_metadata['test_img_concepts'][item], self.img_metadata['test_img_files'][item])
+            img_idx = item % len(self.img_concepts)
+            img_file = os.path.join(self.img_parent_dir, 'training_images' if not self.test else 'test_images', 
+                    self.img_concepts[img_idx], self.img_files[img_idx]) 
             pair = Image.open(img_file).convert('RGB')
             sample = (torch.from_numpy(np.mean(eeg[:, :, :, :], axis=1)).to(torch.float), (self.img_transform(pair).to(torch.float)))
-            label = self.labels[item]
+            label = self.labels_list[item]
+            assert int(self.img_concepts[img_idx].split("_")[0])-1 == label
         elif self.pretrain_eeg:
             sample = (torch.from_numpy(eeg[:, 0, :, :]).to(torch.float), torch.from_numpy(eeg[:, 1, :, :]).to(torch.float))
-            label = self.labels[item]
+            label = self.labels_list[item]
         else:
             sample = torch.from_numpy(np.mean(eeg[:, :, :, :], axis=1)).to(torch.float)
-            label = self.labels[item]
+            label = self.labels_list[item]
         # img_file = self.image_files[self.indices[item]].copy()
         return sample, label
 
@@ -446,12 +448,13 @@ if __name__ == "__main__":
     elif selected == "things-eeg-2":
         data_loaded = ThingsEEG2(
             data_path=eeg_path,
-            subject_id=1,
+            subject_id=[1, 5],
             download=False,
-            load_img=False,
-            pretrain_eeg=True,
+            load_img=True,
+            test=True,
+            pretrain_eeg=False,
         )
     print(len(data_loaded))
-    x, l = data_loaded[0]
+    x, l = data_loaded[320]
     print("x = ", x)
     print("l = ", l)

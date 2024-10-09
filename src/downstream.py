@@ -63,18 +63,29 @@ def retrieval(eeg_encoder, img_encoder, data_loader, device="cuda:0"):
     top3 = 0
     top5 = 0
     with torch.no_grad():
-        progress_bar = tqdm(data_loader)
-        for data, y in progress_bar:
-            eeg, _ = data
+        # progress_bar = tqdm(data_loader)
+        for i, (data, y) in enumerate(data_loader):
+            eeg, img = data
             eeg = eeg.to(device, non_blocking=True)
+            img = img.to(device, non_blocking=True)
             y = y.to(device, non_blocking=True)
+
+            img_embeddings_batch = img_encoder(img)
+            img_embeddings_batch = F.normalize(img_embeddings_batch, p=2, dim=-1)
+            sim_img = (img_embeddings_batch @ img_embeddings.t()).softmax(dim=-1)
+            _, tt_label = sim_img.topk(1)
+
+            print("labels from images: ", tt_label)
+            print("true labels: ", y)
+
             eeg_embeddings = eeg_encoder(eeg)
             eeg_embeddings = F.normalize(eeg_embeddings, p=2, dim=-1)
             
             similarity = (eeg_embeddings @ img_embeddings.t()).softmax(dim=-1)
             _, indices = similarity.topk(5)
 
-            tt_label = y.view(-1, 1)
+            # tt_label = y.view(-1, 1)
+            tt_label = tt_label.view(-1, 1)
             total += y.size(0)
             top1 += (tt_label == indices[:, :1]).sum().item()
             top3 += (tt_label == indices[:, :3]).sum().item()

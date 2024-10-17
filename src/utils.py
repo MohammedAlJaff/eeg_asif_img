@@ -63,6 +63,7 @@ def load_dataset(dataset_name, data_path, **kwargs):
             pretrain_eeg=kwargs['pretrain_eeg'],
             test=test,
             select_channels=select_channels,
+            training_ratio=kwargs['subj_training_ratio'],
         )
     else: 
         raise NotImplementedError

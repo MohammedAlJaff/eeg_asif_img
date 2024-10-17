@@ -53,6 +53,7 @@ def parse_args():
     parser.add_argument('--dataset', type=str, default="spampinato")
     parser.add_argument('--subject_id', type=int, nargs='+', default=[0], help="Subject ID(s). Provide one or more subject IDs.")
     parser.add_argument('--test_subject', type=int, default=None)
+    parser.add_argument('--subj_training_ratio', type=float, default=1, help="a ratio between 0 and 1 determining how much of target participants training samples to be used")
     parser.add_argument('--channels', type=int, nargs='+', default=None)
     parser.add_argument('--n_classes', type=int, default=40)
     parser.add_argument('--eeg_enc', type=str, default="eegnet")
@@ -77,7 +78,7 @@ def parse_args():
 def return_dataloaders(dataset_nm, data_pth, sid, n_classes, batch, num_workers, seed_val, split_path, device_type, separate_test=False, **kwargs):
 
     data, ds_configs = utils.load_dataset(dataset_name=dataset_nm, data_path=paths['eeg_data'], n_classes=n_classes, sid=sid, load_img=kwargs['load_img'], 
-                                          pretrain_eeg=kwargs['pretrain_eeg'], select_channels=kwargs['select_channels'])
+                                          pretrain_eeg=kwargs['pretrain_eeg'], select_channels=kwargs['select_channels'], subj_training_ratio=kwargs['subj_training_ratio'])
     print(ds_configs)
     
     g = torch.Generator().manual_seed(seed_val)
@@ -105,7 +106,7 @@ def return_dataloaders(dataset_nm, data_pth, sid, n_classes, batch, num_workers,
             train_data, val_data = torch.utils.data.random_split(
                 data, [0.8, 0.2], generator=g)
             test_data, _ = utils.load_dataset(dataset_name=dataset_nm, data_path=paths['eeg_data'], n_classes=n_classes, sid=kwargs['test_subject'], test=True, load_img=kwargs['load_img'], 
-                                              pretrain_eeg=kwargs['pretrain_eeg'], select_channels=kwargs['select_channels'])
+                                              pretrain_eeg=kwargs['pretrain_eeg'], select_channels=kwargs['select_channels'], subj_training_ratio=1.0)
         train_dl = DataLoader(train_data, batch_size=batch, shuffle=True,
                                 drop_last=True,
                                 num_workers=num_workers,
@@ -205,6 +206,7 @@ if __name__ == "__main__":
             pretrain_eeg=True if modality == "eeg-eeg" else False,
             separate_test=separate_test_set,
             select_channels=channels,
+            subj_training_ratio=args.subj_training_ratio,
             device_type=device)    
         
         if modality == "eeg-img":

@@ -311,6 +311,7 @@ class ThingsEEG2(Dataset):
         pretrain_eeg=False,
         test=False,
         select_channels=None,
+        training_ratio=1.0,
         download=False,
         ):
 
@@ -318,6 +319,7 @@ class ThingsEEG2(Dataset):
         self.load_img = load_img
         self.img_transform = _transform(img_size)
         self.test = test
+        self.training_ratio = training_ratio
         data_path = os.path.join(data_path, "things_eeg_2")
         os.makedirs(data_path, exist_ok=True)
 
@@ -386,7 +388,26 @@ class ThingsEEG2(Dataset):
         
         # Concatenate all subjects' EEG data
         self.eeg_data = np.concatenate(self.eeg_data_list, axis=0)
+        print("eeg data shape orig = ", self.eeg_data.shape)
+        self.selected_indices = None
+        if not self.test:
+            self._sample_data()
+        print("len(self.eeg_data) = ", len(self.eeg_data))
+        print("eeg data shape after = ", self.eeg_data.shape)
 
+    def _sample_data(self):
+        """Randomly samples the training data based on the given training_ratio."""
+        num_samples = len(self.eeg_data)
+        num_samples_to_use = int(self.training_ratio * num_samples)
+        
+        # Randomly select indices to keep
+        self.selected_indices = np.random.choice(np.arange(num_samples), num_samples_to_use, replace=False)
+        self.selected_indices = np.sort(self.selected_indices)
+        
+        # Subset the data and labels based on the selected indices
+        self.eeg_data = self.eeg_data[self.selected_indices]
+        self.labels_list = [self.labels_list[i] for i in self.selected_indices]
+    
     def __len__(self):
         return len(self.eeg_data)
 
@@ -405,7 +426,10 @@ class ThingsEEG2(Dataset):
         eeg = f(x2)
         # TODO EEGChannelNet only works with even number of channels but that's not the only issue
         if self.load_img:
-            img_idx = item % len(self.img_concepts)
+            
+            img_item = self.selected_indices[item] if self.selected_indices is not None else item
+            img_idx = img_item % len(self.img_concepts)
+
             img_file = os.path.join(self.img_parent_dir, 'training_images' if not self.test else 'test_images', 
                     self.img_concepts[img_idx], self.img_files[img_idx]) 
             pair = Image.open(img_file).convert('RGB')

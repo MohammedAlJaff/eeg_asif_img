@@ -45,12 +45,13 @@ def load_dataset(dataset_name, data_path, **kwargs):
             load_img=kwargs['load_img']
         )
     elif dataset_name == "things-eeg-2":
+        select_channels = kwargs['select_channels'] if 'select_channels' in kwargs.keys() else None
         data_configs = {
             "t_l": -0.2,
             "t_h": 0.8,
             "fs": 128,  # I have changed this from 100 to 128 in the Dataset description
             "n_samples": 128,
-            "n_channels": 17,
+            "n_channels": 17 if select_channels is None else len(select_channels),
             "n_classes": 1654,
         }
         test = kwargs['test'] if 'test' in kwargs.keys() else False
@@ -60,7 +61,8 @@ def load_dataset(dataset_name, data_path, **kwargs):
             subject_id=kwargs['sid'],
             load_img=kwargs['load_img'],
             pretrain_eeg=kwargs['pretrain_eeg'],
-            test=test
+            test=test,
+            select_channels=select_channels,
         )
     else: 
         raise NotImplementedError

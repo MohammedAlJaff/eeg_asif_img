@@ -35,6 +35,7 @@ class UnimodalTrainer:
         self.filename = filename
         self.patience = 100
         self.clip_grad = 0.8
+        self.log_every = 50
 
     def train(self, train_data_loader: DataLoader, val_data_loader: DataLoader):
         scaler = GradScaler(enabled=self.mixed_precision)
@@ -128,6 +129,10 @@ class UnimodalTrainer:
                 "lr": current_lr
             })
 
+            if epoch % self.log_every == 0:
+                torch.save(best_model, os.path.join(self.save_path, self.filename + f"_{epoch}" + ".pth"))
+
+
         print("Finished training.")
         print("Creating checkpoint.")
 
@@ -142,7 +147,7 @@ class UnimodalTrainer:
 
         print(f"Best Validation Loss = {best_model['val_loss']} (Epoch = {best_model['epoch']})")
         # filename = f'{self.save_path}/checkpoint.pth.tar'
-        torch.save(best_model, os.path.join(self.save_path, self.filename))
+        torch.save(best_model, os.path.join(self.save_path, self.filename + f"_{epoch}" + ".pth"))
         # filename_img = f'{self.writer.log_dir}/checkpoint_image_encoder.pth.tar'
         # filename_eeg = f'{self.writer.log_dir}/checkpoint_eeg_encoder.pth.tar'
         # torch.save(self.image_encoder.state_dict(), filename_img)
@@ -200,6 +205,7 @@ class BimodalTrainer:
         self.filename = filename
         self.patience = 150
         self.clip_grad = 0.8
+        self.log_every = 50
 
     def train(self, train_data_loader: DataLoader, val_data_loader: DataLoader):
         scaler = GradScaler(enabled=self.mixed_precision)
@@ -298,6 +304,9 @@ class BimodalTrainer:
                 "lr": current_lr
             })
 
+            if epoch % self.log_every == 0:
+                torch.save(best_model, os.path.join(self.save_path, self.filename + f"_{epoch}" + ".pth"))
+
         print("Finished training.")
         print("Creating checkpoint.")
 
@@ -311,7 +320,7 @@ class BimodalTrainer:
 
         print(f"Best Validation Loss = {best_model['val_loss']} (Epoch = {best_model['epoch']})")
         # filename = f'{self.save_path}/checkpoint.pth.tar'
-        torch.save(best_model, os.path.join(self.save_path, self.filename))
+        torch.save(best_model, os.path.join(self.save_path, self.filename + f"_{epoch}" + ".pth"))
         # filename_img = f'{self.writer.log_dir}/checkpoint_image_encoder.pth.tar'
         # filename_eeg = f'{self.writer.log_dir}/checkpoint_eeg_encoder.pth.tar'
         # torch.save(self.image_encoder.state_dict(), filename_img)

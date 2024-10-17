@@ -139,7 +139,7 @@ class WarmupScheduler:
 
 class CLIPLoss(torch.nn.Module):
 
-    def __init__(self, temperature: float = 0.07):
+    def __init__(self, temperature: float = 0.04):
         super().__init__()
         self.temperature = temperature
         self.logit_scale = nn.Parameter(torch.ones([]) * torch.log(torch.tensor(1 / temperature)))
@@ -156,3 +156,43 @@ class CLIPLoss(torch.nn.Module):
         loss_ji = nn.functional.cross_entropy(z_j_logits, labels)
 
         return (loss_ij + loss_ji) / 2
+
+
+class MultiPosConLoss(nn.Module):
+    """Multi-positive contrastive loss, for image-text contrast."""
+    def __init__(self, temperature=0.1, w2=1.0):
+        """
+        Args:
+            temperature: temperature for contrastive loss
+            w2: weight for the image-text part
+        """
+        super(MultiPosConLossMM, self).__init__()
+        self.temperature = temperature
+        self.logit_scale = nn.Parameter(torch.ones([]) * torch.log(torch.tensor(1 / temperature)))
+        self.last_local_batch_size = None
+        self.v_label_matrix = None
+        self.t_label_matrix = None
+
+    def forward(self, z_i: torch.Tensor, z_j: torch.Tensor, y):
+        device = z_i.device
+
+        logit_scale = torch.exp(self.logit_scale)
+
+        # Compute logits for image-text contrasting
+        z_i_logits = (z_i @ z_j.T) * logit_scale
+        z_j_logits = z_i_logits.T
+
+        # Compute label matrices for image-text contrastive loss
+        
+
+        # Image-text loss
+        v_mask = self.v_label_matrix
+        p_v = v_mask / v_mask.sum(1, keepdim=True).clamp(min=1.0)
+        t_mask = self.t_label_matrix
+        p_t = t_mask / t_mask.sum(1, keepdim=True).clamp(min=1.0)
+        img_txt_loss = (nn.functional.cross_entropy(p_v, logits_v) + nn.functional.cross_entropy(p_t, logits_t)) / 2
+
+        # Total loss
+        loss = img_txt_loss
+
+        return {'loss': loss, 'img_txt_loss': img_txt_loss}

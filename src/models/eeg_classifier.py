@@ -39,7 +39,7 @@ class EEGClassifier(nn.Module):
             encoder = pretrained_encoder
             for param in encoder.parameters():
                 param.requires_grad = False
-            mlp_head = eeg_encoder.ClassificationHead(input_size=encoder.embed_dim, n_classes=n_classes, n_layers=1, hidden_size=encoder.embed_dim)
+            mlp_head = eeg_encoder.MLPHead(input_size=encoder.embed_dim, n_classes=n_classes, n_layers=1, hidden_size=encoder.embed_dim)
             self.eeg_backbone = torch.nn.Sequential(OrderedDict([('encoder', encoder), ('cls', mlp_head)]))
         elif backbone == 'eegnet':
             print('n_channels = ', n_channels)
@@ -56,11 +56,13 @@ class EEGClassifier(nn.Module):
                                            lstm_layers=kwargs['lstm_layers'], n_classes=n_classes, device=device).to(device)
 
         elif backbone == 'resnet1d':
+            net_filter_size = kwargs['net_filter_size'] if 'net_filter_size' in kwargs.keys() else [64, 128, 196, 256, 320] # [16, 16, 32, 32, 64]
+            net_seq_length = kwargs['net_seq_length'] if 'net_seq_length' in kwargs.keys() else [n_samples, 128, 64, 32, 16]
             self.eeg_backbone = eeg_architectures.ResNet1d(
                 n_channels=n_channels, 
                 n_samples=n_samples, 
-                net_filter_size=[16, 16, 32, 32, 64], 
-                net_seq_length=[n_samples, 128, 64, 32, 16], 
+                net_filter_size=net_filter_size, 
+                net_seq_length=net_seq_length, 
                 n_classes=n_classes)
         else:
             raise NotImplementedError

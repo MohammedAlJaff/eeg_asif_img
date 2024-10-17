@@ -69,12 +69,14 @@ class EEGEncoder(nn.Module): # TODO: now every architecture has a classification
                                            lstm_layers=kwargs['lstm_layers'], device=device)
             print(get_graph_node_names(self.eeg_backbone))
         elif backbone == 'resnet1d':
+            net_filter_size = kwargs['net_filter_size'] if 'net_filter_size' in kwargs.keys() else [64, 128, 196, 256, 320] # [16, 16, 32, 32, 64]
+            net_seq_length = kwargs['net_seq_length'] if 'net_seq_length' in kwargs.keys() else [n_samples, 128, 64, 32, 16]
             self.eeg_backbone = eeg_architectures.ResNet1d(
                 n_channels=n_channels, 
                 n_samples=n_samples, 
-                net_filter_size=[16, 16, 32, 32, 64], 
+                net_filter_size=net_filter_size, 
                 # net_seq_length=[n_samples, 128, 64, 32, 16],
-                net_seq_length=[n_samples, 128, 64, 32, 16], 
+                net_seq_length=net_seq_length, 
                 n_classes=n_classes)
             if self.checkpoint:
                 self.eeg_backbone.load_state_dict(self.checkpoint) 
@@ -100,7 +102,7 @@ class EEGEncoder(nn.Module): # TODO: now every architecture has a classification
         
         return embedding.squeeze(dim=1)
 
-class ClassificationHead(nn.Module):
+class MLPHead(nn.Module):
     def __init__(
         self,
         input_size,

@@ -310,6 +310,7 @@ class ThingsEEG2(Dataset):
         load_img=False,
         pretrain_eeg=False,
         test=False,
+        select_channels=None,
         download=False,
         ):
 
@@ -361,6 +362,8 @@ class ThingsEEG2(Dataset):
             eeg_data = np.load(os.path.join(eeg_parent_dir,
                     'preprocessed_eeg_training.npy' if not self.test else 'preprocessed_eeg_test.npy'), allow_pickle=True).item()
             subject_eeg_data = eeg_data['preprocessed_eeg_data']
+            if select_channels:
+                subject_eeg_data = subject_eeg_data[:, :, select_channels, :]
 
             tmp_labels = self.img_concepts
             labels = [int(l.split("_")[0])-1 for l in tmp_labels]
@@ -448,13 +451,15 @@ if __name__ == "__main__":
     elif selected == "things-eeg-2":
         data_loaded = ThingsEEG2(
             data_path=eeg_path,
-            subject_id=[1, 5],
+            subject_id=1,
             download=False,
             load_img=True,
-            test=True,
+            test=False,
+            select_channels=[3, 4, 5, 6, 7, 13, 14, 15],
             pretrain_eeg=False,
         )
     print(len(data_loaded))
     x, l = data_loaded[320]
-    print("x = ", x)
+    print(x[0].shape)
+    # print("x = ", x)
     print("l = ", l)

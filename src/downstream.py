@@ -75,9 +75,6 @@ def retrieval(eeg_encoder, img_encoder, data_loader, device="cuda:0"):
             sim_img = (img_embeddings_batch @ img_embeddings.t()).softmax(dim=-1)
             _, tt_label = sim_img.topk(1)
 
-            print("labels from images: ", tt_label)
-            print("true labels: ", y)
-
             eeg_embeddings = eeg_encoder(eeg)
             eeg_embeddings = F.normalize(eeg_embeddings, p=2, dim=-1)
             

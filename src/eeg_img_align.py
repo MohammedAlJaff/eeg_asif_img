@@ -178,21 +178,21 @@ if __name__ == "__main__":
 
         if modality == "eeg-img":
             if test_subject is None:
-                directory_name = f"pretrain_{dataset_name}_s{subject_id}_{eeg_enc_name}_{img_enc_name}_"
+                directory_name = f"pretrain_{dataset_name}_s{subject_id}_r{args.subj_training_ratio}_{eeg_enc_name}_{img_enc_name}_"
             else:
-                directory_name = f"pretrain_{dataset_name}_ts{test_subject}_{eeg_enc_name}_{img_enc_name}_"
+                directory_name = f"pretrain_{dataset_name}_ts{test_subject}_r{args.subj_training_ratio}_{eeg_enc_name}_{img_enc_name}_"
         else:
             if test_subject is None:
-                directory_name = f"pretrain_{dataset_name}_s{subject_id}_{eeg_enc_name}_"
+                directory_name = f"pretrain_{dataset_name}_s{subject_id}_r{args.subj_training_ratio}_{eeg_enc_name}_"
             else:
-                directory_name = f"pretrain_{dataset_name}_ts{test_subject}_{eeg_enc_name}_"
+                directory_name = f"pretrain_{dataset_name}_ts{test_subject}_r{args.subj_training_ratio}_{eeg_enc_name}_"
         
         current_datetime = datetime.now()
         directory_name += current_datetime.strftime("%Y-%m-%d_%H-%M-%S")
         paths["save_path"] = os.path.join(paths["save_path"], directory_name)
         os.makedirs(paths["save_path"], exist_ok=True)
         print(f"Directory '{directory_name}' created.")
-        utils.save_config(wandb.config, root_path=paths['save_path'])
+        utils.save_config(args, root_path=paths['save_path'])
 
         train_data_loader, val_data_loader, test_data_loader, data_configs = return_dataloaders(
             dataset_nm=dataset_name, 
@@ -278,6 +278,7 @@ if __name__ == "__main__":
                 pretrain_eeg=False,
                 separate_test=separate_test_set,
                 select_channels=channels,
+                subj_training_ratio=args.subj_training_ratio,
                 device_type=device)
             loaders = {'train': train_data_loader, 'val': val_data_loader, 'test': test_data_loader} 
             test_loss, test_acc = downstream.classification(
@@ -301,6 +302,7 @@ if __name__ == "__main__":
                 pretrain_eeg=False,
                 separate_test=separate_test_set,
                 select_channels=channels,
+                subj_training_ratio=args.subj_training_ratio,
                 device_type=device)
             top1_acc, top3_acc, top5_acc = downstream.retrieval(eeg_encoder, img_encoder, test_data_loader, device=device)
             topk_scores = {
@@ -311,7 +313,8 @@ if __name__ == "__main__":
             with open(os.path.join(paths["save_path"], "topk_performances.pkl"), 'wb') as f:
                 pickle.dump(topk_scores, f)
         else:
-            raise NotImplementedError
+            print("No Downstream Task Selected. We Are Done!")
+            
 
         # classifier_model = EEGClassifier(
         #     backbone=eeg_enc_name,

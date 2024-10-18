@@ -9,7 +9,7 @@ import src.datasets.eeg_image as eimg
 
 def save_config(loaded_config, root_path, filename='config_run.json'):
     with open(os.path.join(root_path, filename), 'w') as file:
-        json.dump(loaded_config.as_dict(), file)
+        json.dump(vars(loaded_config), file)
 
 def load_dataset(dataset_name, data_path, **kwargs):
     if dataset_name == "spampinato_npy":

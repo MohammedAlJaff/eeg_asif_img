@@ -1,13 +1,6 @@
-"""
-Load data proposed by:
-    C. Spampinato, S. Palazzo, I. Kavasidis, D. Giordano, N. Souly, M. Shah, 
-    Deep Learning Human Mind for Automated Visual Classification, International
-    Conference on Computer Vision and Pattern Recognition, CVPR 2017
-"""
 import sys
 
 sys.path.append("/proj/rep-learning-robotics/users/x_nonra/eeg_asif_img")
-# sys.path.append("/mimer/NOBACKUP/groups/eeg_foundation_models/eeg_asif_img/")
 
 import os
 import numpy as np
@@ -98,8 +91,10 @@ def unzip_nested_files(root_dir):
 
 def parse_args():
     parser = argparse.ArgumentParser()
-    parser.add_argument('-c', '--config', type=str)
-    parser.add_argument('-s', '--server', type=int, default=1)
+    parser.add_argument("--dataset", type=str, default="things-eeg-2", help="Dataset to use")
+    parser.add_argument("--data_path", type=str, default="/proj/rep-learning-robotics/users/x_nonra/eeg_asif_img/data/", help="Path to data")
+    parser.add_argument("--subject_id", type=int, default=1, help="Subject ID")
+    parser.add_argument("--download", action="store_true", help="Download the dataset")
     return parser.parse_args()
 
 
@@ -449,9 +444,16 @@ class ThingsEEG2(Dataset):
 
 
 if __name__ == "__main__":
-    selected = "things-eeg-2"
-    eeg_path = "/proj/rep-learning-robotics/users/x_nonra/eeg_asif_img/data/"
-    if selected == "spampinato_all":
+
+    args = parse_args()
+    eeg_path = args.data_path
+    download = args.download
+    dataset = args.dataset
+
+    if not os.path.exists(eeg_path):
+        os.makedirs(eeg_path)
+
+    if dataset == "spampinato_all":
         data_loaded = EEGImagenet(
             data_path=eeg_path,
             z_score=False,
@@ -462,28 +464,25 @@ if __name__ == "__main__":
             time_high=0.46,
             download=True
         )
-    elif selected == "spampinato":
+    elif dataset == "spampinato":
         data_loaded = SpampinatoDataset(
             data_path=eeg_path,
             subject_id=1,
             fs=1000,
             time_low=0.02,
             time_high=0.46,
-            load_img=True,
-            download=False
+            load_img=False,
+            download=download
         )
-    elif selected == "things-eeg-2":
+    elif dataset == "things-eeg-2":
         data_loaded = ThingsEEG2(
             data_path=eeg_path,
             subject_id=1,
-            download=False,
-            load_img=True,
+            download=download,
+            load_img=False,
             test=False,
-            select_channels=[3, 4, 5, 6, 7, 13, 14, 15],
             pretrain_eeg=False,
+            select_channels=None,
+            training_ratio=1.0,
         )
     print(len(data_loaded))
-    x, l = data_loaded[320]
-    print(x[0].shape)
-    # print("x = ", x)
-    print("l = ", l)

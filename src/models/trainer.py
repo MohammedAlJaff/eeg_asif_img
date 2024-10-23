@@ -21,7 +21,6 @@ class UnimodalTrainer:
 
         self.model = model.to(device)
         self.loss = loss.to("cuda" if device.startswith("cuda") else "cpu")
-        self.loss_scaler = ut.NativeScalerWithGradNormCount()
         self.optimizer = optimizer
         self.accuracy = Accuracy(task='multiclass', num_classes=kwargs["num_classes"])
 
@@ -35,7 +34,7 @@ class UnimodalTrainer:
         self.filename = filename
         self.patience = 100
         self.clip_grad = 0.8
-        self.log_every = 50
+        self.log_every = 100
 
     def train(self, train_data_loader: DataLoader, val_data_loader: DataLoader):
         scaler = GradScaler(enabled=self.mixed_precision)
@@ -56,11 +55,6 @@ class UnimodalTrainer:
             self.model.train()
             progress_bar = tqdm(train_data_loader)
             for data, y in progress_bar:
-
-                # adjust learning rate
-                # ut.adjust_learning_rate(self.optimizer, steps / len(train_data_loader) + epoch,
-                #                         warmup_epochs=self.warmup_epochs, num_epoch=self.epochs,
-                #                         lr=self.lr, min_lr=self.min_lr)
 
                 x = data
 
@@ -192,7 +186,6 @@ class BimodalTrainer:
         self.image_encoder = image_encoder.to(device) if image_encoder is not None else None
 
         self.loss = loss.to("cuda" if device.startswith("cuda") else "cpu")
-        self.loss_scaler = ut.NativeScalerWithGradNormCount()
         self.optimizer = optimizer
 
         self.epochs = kwargs['epochs']
@@ -228,11 +221,6 @@ class BimodalTrainer:
             progress_bar = tqdm(train_data_loader)
             for data, _ in progress_bar:
 
-                # adjust learning rate
-                # ut.adjust_learning_rate(self.optimizer, steps / len(train_data_loader) + epoch,
-                #                         warmup_epochs=self.warmup_epochs, num_epoch=self.epochs,
-                #                         lr=self.lr, min_lr=self.min_lr)
-
                 self.optimizer.zero_grad()
 
                 eeg, image = data
@@ -252,11 +240,6 @@ class BimodalTrainer:
                     loss = self.loss(z_i, z_j)
 
                 loss_epoch.append(loss.item())
-
-                # if self.image_encoder is not None:
-                #     self.loss_scaler(loss, self.optimizer, parameters=itertools.chain(self.eeg_encoder.parameters(), self.image_encoder.parameters()), clip_grad=self.clip_grad)
-                # else:
-                #     self.loss_scaler(loss, self.optimizer, parameters=self.eeg_encoder.parameters(), clip_grad=self.clip_grad)
 
                 scaler.scale(loss).backward()
                 scaler.step(self.optimizer)

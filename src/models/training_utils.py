@@ -158,6 +158,60 @@ class CLIPLoss(torch.nn.Module):
         return (loss_ij + loss_ji) / 2
 
 
+class SoftCLIPLoss(torch.nn.Module):
+
+    def __init__(self, temperature: float = 0.04):
+        super().__init__()
+        self.temperature = temperature
+        self.logit_scale = nn.Parameter(torch.ones([]) * torch.log(torch.tensor(1 / temperature)))
+    def forward(self, z_i: torch.Tensor, z_j: torch.Tensor):
+        logit_scale = torch.exp(self.logit_scale)
+        clip_clip = (z_j @ z_j.T) * logit_scale
+        brain_clip = (z_i @ z_j.T) * logit_scale
+
+        loss1 = -(brain_clip.log_softmax(-1) * clip_clip.softmax(-1)).sum(-1).mean()
+        loss2 = -(brain_clip.T.log_softmax(-1) * clip_clip.softmax(-1)).sum(-1).mean()
+    
+        loss = (loss1 + loss2)/2
+        return loss
+
+
+def mixco(voxels, beta=0.15, s_thresh=0.5, perm=None, betas=None, select=None):
+    if perm is None:
+        perm = torch.randperm(voxels.shape[0])
+    voxels_shuffle = voxels[perm].to(voxels.device,dtype=voxels.dtype)
+    if betas is None:
+        betas = torch.distributions.Beta(beta, beta).sample([voxels.shape[0]]).to(voxels.device,dtype=voxels.dtype)
+    if select is None:
+        select = (torch.rand(voxels.shape[0]) <= s_thresh).to(voxels.device)
+    betas_shape = [-1] + [1]*(len(voxels.shape)-1)
+    voxels[select] = voxels[select] * betas[select].reshape(*betas_shape) + \
+        voxels_shuffle[select] * (1 - betas[select]).reshape(*betas_shape)
+    betas[~select] = 1
+    return voxels, perm, betas, select
+
+
+def mixco_nce(preds, targs, temp=0.1, perm=None, betas=None, select=None, distributed=False, 
+              accelerator=None, local_rank=None, bidirectional=True):
+    brain_clip = (preds @ targs.T)/temp
+    
+    if perm is not None and betas is not None and select is not None:
+        probs = torch.diag(betas)
+        probs[torch.arange(preds.shape[0]).to(preds.device), perm] = 1 - betas
+
+        loss = -(brain_clip.log_softmax(-1) * probs).sum(-1).mean()
+        if bidirectional:
+            loss2 = -(brain_clip.T.log_softmax(-1) * probs.T).sum(-1).mean()
+            loss = (loss + loss2)/2
+        return loss
+    else:
+        loss =  nn.functional.cross_entropy(brain_clip, torch.arange(brain_clip.shape[0]).to(brain_clip.device))
+        if bidirectional:
+            loss2 = nn.functional.cross_entropy(brain_clip.T, torch.arange(brain_clip.shape[0]).to(brain_clip.device))
+            loss = (loss + loss2)/2
+        return loss
+
+
 class MultiPosConLoss(nn.Module):
     """Multi-positive contrastive loss, for image-text contrast."""
     def __init__(self, temperature=0.1, w2=1.0):

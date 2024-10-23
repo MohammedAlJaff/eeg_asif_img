@@ -19,7 +19,7 @@ from src.models.eeg_classifier import EEGClassifier
 from src.models.image_encoder import ImageEncoder
 from src.models.trainer import BimodalTrainer, UnimodalTrainer
 from src.datasets.eeg_image import Splitter
-from src.models.training_utils import CLIPLoss
+from src.models.training_utils import CLIPLoss, SoftCLIPLoss
 from src import downstream
 
 
@@ -58,6 +58,7 @@ def parse_args():
     parser.add_argument('--n_classes', type=int, default=40)
     parser.add_argument('--eeg_enc', type=str, default="eegnet")
     parser.add_argument('--img_enc', type=str, default="ViT")
+    parser.add_argument('--loss', type=str, default="clip-loss")
     parser.add_argument('--embed_dim', type=int, default=768)
     parser.add_argument('--net_filter_size', type=int, nargs='+', default=None)
     parser.add_argument('--net_seq_length', type=int, nargs='+', default=None)
@@ -67,7 +68,7 @@ def parse_args():
     parser.add_argument('--warmup', type=int, default=50)
     parser.add_argument('--temperature', type=float, default=0.04)
     parser.add_argument('--n_workers', type=int, default=4)
-    parser.add_argument('--downstream', type=str, default="classification")
+    parser.add_argument('--downstream', type=str, default=None)
     parser.add_argument('--separate_test', action="store_true")
     parser.add_argument('-b', '--batch', type=int, default=512)
     parser.add_argument('--lr', type=float, default=0.0001)
@@ -148,6 +149,9 @@ if __name__ == "__main__":
         separate_test_set = args.separate_test
         channels=args.channels
 
+        if args.subj_training_ratio == 0:
+            epochs=0
+
         if args.net_filter_size:
             model_configs['resnet1d']['net_filter_size'] = args.net_filter_size
 
@@ -176,16 +180,18 @@ if __name__ == "__main__":
         print(f"Starting a run on {dataset_name} with {eeg_enc_name}")
         print(f"Modalities Involved: {modality}")
 
+        start_str = "scratch" if args.checkpoint is None else "pretrained"
+
         if modality == "eeg-img":
             if test_subject is None:
-                directory_name = f"pretrain_{dataset_name}_s{subject_id}_r{args.subj_training_ratio}_{eeg_enc_name}_{img_enc_name}_"
+                directory_name = f"{start_str}_{dataset_name}_s{subject_id}_r{args.subj_training_ratio}_{eeg_enc_name}_{img_enc_name}_"
             else:
-                directory_name = f"pretrain_{dataset_name}_ts{test_subject}_r{args.subj_training_ratio}_{eeg_enc_name}_{img_enc_name}_"
+                directory_name = f"{start_str}_{dataset_name}_ts{test_subject}_r{args.subj_training_ratio}_{eeg_enc_name}_{img_enc_name}_"
         else:
             if test_subject is None:
-                directory_name = f"pretrain_{dataset_name}_s{subject_id}_r{args.subj_training_ratio}_{eeg_enc_name}_"
+                directory_name = f"{start_str}_{dataset_name}_s{subject_id}_r{args.subj_training_ratio}_{eeg_enc_name}_"
             else:
-                directory_name = f"pretrain_{dataset_name}_ts{test_subject}_r{args.subj_training_ratio}_{eeg_enc_name}_"
+                directory_name = f"{start_str}_{dataset_name}_ts{test_subject}_r{args.subj_training_ratio}_{eeg_enc_name}_"
         
         current_datetime = datetime.now()
         directory_name += current_datetime.strftime("%Y-%m-%d_%H-%M-%S")
@@ -193,6 +199,7 @@ if __name__ == "__main__":
         os.makedirs(paths["save_path"], exist_ok=True)
         print(f"Directory '{directory_name}' created.")
         utils.save_config(args, root_path=paths['save_path'])
+        print(vars(args))
 
         train_data_loader, val_data_loader, test_data_loader, data_configs = return_dataloaders(
             dataset_nm=dataset_name, 
@@ -206,7 +213,7 @@ if __name__ == "__main__":
             pretrain_eeg=True if modality == "eeg-eeg" else False,
             separate_test=separate_test_set,
             select_channels=channels,
-            subj_training_ratio=args.subj_training_ratio,
+            subj_training_ratio=args.subj_training_ratio if args.subj_training_ratio > 0 else 0.01,
             device_type=device)    
         
         if modality == "eeg-img":
@@ -234,37 +241,43 @@ if __name__ == "__main__":
             )
         eeg_encoder = eeg_encoder.float()
 
-        loss = CLIPLoss(temperature=args.temperature)
+        if args.loss == "clip-loss":
+            loss = CLIPLoss(temperature=args.temperature)
+        elif args.loss == "soft-clip":
+            loss = SoftCLIPLoss(temperature=args.temperature)
+        else:
+            loss = CLIPLoss(temperature=args.temperature)
 
         if args.checkpoint:
             checkpoint = torch.load(args.checkpoint)['model_state_dict']
             eeg_encoder.load_state_dict(checkpoint)
             eeg_encoder.to(device)
         
-        if modality == "eeg-img":
-            optim = torch.optim.AdamW(itertools.chain(eeg_encoder.parameters(), img_encoder.parameters()), lr=min_lr, weight_decay=weight_decay)
-        else:
-            optim = torch.optim.AdamW(eeg_encoder.parameters(), lr=min_lr, weight_decay=weight_decay)
-        trainer = BimodalTrainer(
-            eeg_encoder=eeg_encoder,
-            image_encoder=img_encoder,
-            optimizer=optim, 
-            loss=loss, 
-            epochs=epochs, 
-            warmup_epochs=warmup_epochs,
-            lr=lr, min_lr=min_lr,  
-            mixed_precision=True,
-            num_classes=n_classes,
-            save_path=paths["save_path"], 
-            filename=f'{eeg_enc_name}_{dataset_name}', 
-            device=device
-            )
-        best_eeg_encoder = trainer.train(train_data_loader, val_data_loader)
-        eeg_encoder.load_state_dict(best_eeg_encoder['model_state_dict']) # TODO What if we also train the image encoder (embedding layer)
-        test_loss = trainer.evaluate(eeg_encoder, img_encoder, test_data_loader)
-        print(f"Test Loss: {test_loss}")
+        if epochs > 0:
+            if modality == "eeg-img":
+                optim = torch.optim.AdamW(itertools.chain(eeg_encoder.parameters(), img_encoder.parameters()), lr=min_lr, weight_decay=weight_decay)
+            else:
+                optim = torch.optim.AdamW(eeg_encoder.parameters(), lr=min_lr, weight_decay=weight_decay)
+            trainer = BimodalTrainer(
+                eeg_encoder=eeg_encoder,
+                image_encoder=img_encoder,
+                optimizer=optim, 
+                loss=loss, 
+                epochs=epochs, 
+                warmup_epochs=warmup_epochs,
+                lr=lr, min_lr=min_lr,  
+                mixed_precision=True,
+                num_classes=n_classes,
+                save_path=paths["save_path"], 
+                filename=f'{eeg_enc_name}_{dataset_name}', 
+                device=device
+                )
+            best_eeg_encoder = trainer.train(train_data_loader, val_data_loader)
+            eeg_encoder.load_state_dict(best_eeg_encoder['model_state_dict']) # TODO What if we also train the image encoder (embedding layer)
+            test_loss = trainer.evaluate(eeg_encoder, img_encoder, test_data_loader)
+            print(f"Test Loss: {test_loss}")
 
-        print(f"Performing the Downstream Task for S{test_subject}")
+        print(f"Performing the Downstream Task for S{test_subject if test_subject is not None else subject_id} (tr={args.subj_training_ratio})")
         if downstream_task == "classification":
             train_data_loader, val_data_loader, test_data_loader, data_configs = return_dataloaders(
                 dataset_nm=dataset_name, 
@@ -302,7 +315,7 @@ if __name__ == "__main__":
                 pretrain_eeg=False,
                 separate_test=separate_test_set,
                 select_channels=channels,
-                subj_training_ratio=args.subj_training_ratio,
+                subj_training_ratio=args.subj_training_ratio if args.subj_training_ratio > 0 else 0.01,
                 device_type=device)
             top1_acc, top3_acc, top5_acc = downstream.retrieval(eeg_encoder, img_encoder, test_data_loader, device=device)
             topk_scores = {

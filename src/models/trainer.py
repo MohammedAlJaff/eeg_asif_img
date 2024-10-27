@@ -178,12 +178,13 @@ class UnimodalTrainer:
 
 class BimodalTrainer:
     def __init__(self, eeg_encoder: torch.nn.Module, image_encoder: torch.nn.Module, optimizer: torch.optim.Optimizer, loss,
-                 save_path, filename, device='cuda:0', **kwargs):
+                 save_path, filename, device='cuda:0', return_subject_id=False, **kwargs):
 
         self.device = device
 
         self.eeg_encoder = eeg_encoder.to(device)
         self.image_encoder = image_encoder.to(device) if image_encoder is not None else None
+        self.return_subject_id = return_subject_id
 
         self.loss = loss.to("cuda" if device.startswith("cuda") else "cpu")
         self.optimizer = optimizer
@@ -193,6 +194,7 @@ class BimodalTrainer:
         self.lr = kwargs['lr']
         self.min_lr = kwargs['min_lr']
         self.warmup_epochs = kwargs['warmup_epochs']
+        self.scheduler = kwargs['scheduler']
 
         self.save_path = save_path
         self.filename = filename
@@ -204,7 +206,13 @@ class BimodalTrainer:
         scaler = GradScaler(enabled=self.mixed_precision)
 
         warmup_scheduler = ut.WarmupScheduler(self.optimizer, self.warmup_epochs, self.lr, start_lr=self.min_lr)
-        lr_scheduler = optim.lr_scheduler.ReduceLROnPlateau(self.optimizer, mode='min', factor=0.1, patience=100)
+        if self.scheduler == "plateau":
+            lr_scheduler = optim.lr_scheduler.ReduceLROnPlateau(self.optimizer, mode='min', factor=0.1, patience=100)
+        elif self.scheduler == "cosine":
+            lr_scheduler = optim.lr_scheduler.CosineAnnealingWarmRestarts(self.optimizer, T_0=10, T_mult=1, eta_min=self.min_lr)
+        else:
+            raise NotImplementedError
+
 
         best_model = None
         best_loss = 10000000
@@ -223,14 +231,21 @@ class BimodalTrainer:
 
                 self.optimizer.zero_grad()
 
-                eeg, image = data
+                if self.return_subject_id:
+                    eeg, image = data[0]
+                    subject_id = data[1]
+                else:
+                    eeg, image = data
                 eeg, image = eeg.to(self.device, non_blocking=True), image.to(self.device, non_blocking=True)
 
                 # eeg = F.normalize(eeg, p=2, dim=-1)
                 # image = F.normalize(image, p=2, dim=-1)
 
                 with torch.autocast(device_type="cuda" if self.device.startswith("cuda") else "cpu", enabled=self.mixed_precision):
-                    z_i = self.eeg_encoder(eeg)
+                    if self.return_subject_id:
+                        z_i = self.eeg_encoder(eeg, subject_id)
+                    else:
+                        z_i = self.eeg_encoder(eeg)
                     if self.image_encoder is not None:
                         z_j = self.image_encoder(image)
                     else:
@@ -269,12 +284,12 @@ class BimodalTrainer:
                 break
 
             # Warmup phase
-            if epoch <= self.warmup_epochs:
+            if epoch < self.warmup_epochs:
                 warmup_scheduler.step()  # Adjust learning rate during warmup
                 current_lr = self.optimizer.param_groups[0]['lr']
             
             # After warmup, apply ReduceLROnPlateau scheduler
-            if epoch > self.warmup_epochs:
+            if epoch >= self.warmup_epochs:
                 lr_scheduler.step(val_loss)  # Reduce LR if val_loss does not improve
                 current_lr = self.optimizer.param_groups[0]['lr']
 
@@ -322,6 +337,8 @@ class BimodalTrainer:
             loss_epoch = []
             progress_bar = tqdm(dataloader)
             for data, y in progress_bar:
+                if self.return_subject_id:
+                    data, subject_id = data
                 eeg, image = data
                 eeg, image = eeg.to(self.device, non_blocking=True), image.to(self.device, non_blocking=True)
                 
@@ -329,7 +346,10 @@ class BimodalTrainer:
                 # image = F.normalize(image, p=2, dim=-1)
 
                 with torch.autocast(device_type="cuda" if self.device.startswith("cuda") else "cpu", enabled=self.mixed_precision):
-                    z_i = eeg_encoder(eeg)
+                    if self.return_subject_id:
+                        z_i = eeg_encoder(eeg, subject_id)
+                    else:
+                        z_i = eeg_encoder(eeg)
                     if image_encoder is not None:
                         z_j = image_encoder(image)
                     else:

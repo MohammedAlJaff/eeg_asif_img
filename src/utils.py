@@ -60,6 +60,7 @@ def load_dataset(dataset_name, data_path, **kwargs):
             data_path=data_path,
             subject_id=kwargs['sid'],
             load_img=kwargs['load_img'],
+            return_subject_id=kwargs['return_subject_id'],
             pretrain_eeg=kwargs['pretrain_eeg'],
             test=test,
             select_channels=select_channels,
@@ -69,7 +70,7 @@ def load_dataset(dataset_name, data_path, **kwargs):
         raise NotImplementedError
     return dataset, data_configs
 
-def get_embeddings(model, data_loader, modality="eeg", save=False, save_path=None, device='cuda'):
+def get_embeddings(model, data_loader, modality="eeg", return_subject_id=False, save=False, save_path=None, device='cuda'):
     
     # progress_bar = tqdm(data_loader)
     embeddings = None
@@ -77,6 +78,9 @@ def get_embeddings(model, data_loader, modality="eeg", save=False, save_path=Non
     model.eval()
     with torch.no_grad():
         for i, (data, y) in enumerate(data_loader):
+            if return_subject_id:
+                subject_id = data[1]
+                data = data[0]
             if modality == "eeg":
                 x, _ = data
             else:

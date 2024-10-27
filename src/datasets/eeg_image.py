@@ -308,10 +308,12 @@ class ThingsEEG2(Dataset):
         select_channels=None,
         training_ratio=1.0,
         download=False,
+        return_subject_id=False
         ):
 
         self.pretrain_eeg = pretrain_eeg
         self.load_img = load_img
+        self.return_subject_id = return_subject_id
         self.img_transform = _transform(img_size)
         self.test = test
         self.training_ratio = training_ratio
@@ -352,6 +354,7 @@ class ThingsEEG2(Dataset):
 
         self.eeg_data_list = []
         self.labels_list = []
+        self.subj_list = []
         
         for sid in subject_id:
         
@@ -379,16 +382,15 @@ class ThingsEEG2(Dataset):
                 labels = list(new_labels)
 
             self.eeg_data_list.append(subject_eeg_data)
+            self.subj_list.extend([str(sid)]*len(labels))
             self.labels_list.extend(labels)
         
         # Concatenate all subjects' EEG data
         self.eeg_data = np.concatenate(self.eeg_data_list, axis=0)
-        print("eeg data shape orig = ", self.eeg_data.shape)
         self.selected_indices = None
         if not self.test:
             self._sample_data()
         print("len(self.eeg_data) = ", len(self.eeg_data))
-        print("eeg data shape after = ", self.eeg_data.shape)
 
     def _sample_data(self):
         """Randomly samples the training data based on the given training_ratio."""
@@ -401,6 +403,7 @@ class ThingsEEG2(Dataset):
         
         # Subset the data and labels based on the selected indices
         self.eeg_data = self.eeg_data[self.selected_indices]
+        self.subj_list = [self.subj_list[i] for i in self.selected_indices]
         self.labels_list = [self.labels_list[i] for i in self.selected_indices]
     
     def __len__(self):
@@ -438,7 +441,10 @@ class ThingsEEG2(Dataset):
             sample = torch.from_numpy(np.mean(eeg[:, :, :, :], axis=1)).to(torch.float)
             label = self.labels_list[item]
         # img_file = self.image_files[self.indices[item]].copy()
-        return sample, label
+        if self.return_subject_id:
+            return (sample, self.subj_list[item]), label
+        else:
+            return sample, label
 
         
 

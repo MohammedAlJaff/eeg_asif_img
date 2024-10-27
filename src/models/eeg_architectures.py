@@ -3,6 +3,7 @@ import torch.nn as nn
 from collections import OrderedDict
 import numpy as np
 import math
+from functools import partial
 
 
 class EEGNet(nn.Module):
@@ -67,6 +68,109 @@ class lstm(nn.Module):
         x = self.classifier((x))
 
         return x
+
+class subject_module(nn.Module):
+
+    def __init__(self, subject_ids, n_filters_in, n_filters_out, kernel_size, downsample, padding):
+        super(subject_module, self).__init__()
+        
+        # Create a dictionary where each subject has a combined Conv1d + BatchNorm1d module
+        self.conv1 = nn.ModuleDict({
+            str(subj_id): nn.Conv1d(n_filters_in, n_filters_out, kernel_size, bias=False, stride=downsample, padding=padding) for subj_id in subject_ids
+        })
+
+        self.bn1 = nn.BatchNorm1d(n_filters_out)
+
+        self.n_filters_in = n_filters_in
+        self.n_filters_out = n_filters_out
+        self.kernel_size = kernel_size
+        self.downsample = downsample
+        self.padding = padding
+
+    def forward(self, x, subj_id):
+        
+        # Apply the combined Conv1d + BatchNorm1d layer for the given subject ID
+        if isinstance(subj_id, list):
+            x = [self.conv1[str(id)](x_i) for id, x_i in zip(subj_id, x)]
+            x = torch.stack(x)  # Stack back into a tensor after processing each element
+        else:
+            x = self.conv1[str(subj_id)](x)
+        
+        x = self.bn1(x)
+
+        return x
+    
+    def add_subject(self, subj_id):
+        # Check if the subject already exists
+        if subj_id in self.conv1.keys():
+            print(f"Subject {subj_id} already exists!")
+        else:
+            # Add a new Conv1d + BatchNorm1d module for the new subject
+            self.conv1.update({str(subj_id): nn.Conv1d(self.n_filters_in, self.n_filters_out, self.kernel_size, bias=False, stride=self.downsample, padding=self.padding)})
+            print(f"Subject {subj_id} added successfully!")
+
+
+class BrainMLP(nn.Module):
+    def __init__(self, out_dim=768, in_dim=1700, clip_size=768, h=4096, n_blocks=4, norm_type='ln', act_first=False, use_projector=True):
+        super().__init__()
+        norm_func = partial(nn.BatchNorm1d, num_features=h) if norm_type == 'bn' else partial(nn.LayerNorm, normalized_shape=h)
+        act_fn = partial(nn.ReLU, inplace=True) if norm_type == 'bn' else nn.GELU
+        act_and_norm = (act_fn, norm_func) if act_first else (norm_func, act_fn)
+        # self.temp = nn.Parameter(torch.tensor(.006))
+        self.lin0 = nn.Sequential(
+            nn.Linear(in_dim, h),
+            *[item() for item in act_and_norm],
+            nn.Dropout(0.5),
+        )
+        self.mlp = nn.ModuleList([
+            nn.Sequential(
+                nn.Linear(h, h),
+                *[item() for item in act_and_norm],
+                nn.Dropout(0.15)
+            ) for _ in range(n_blocks)
+        ])
+        self.lin1 = nn.Linear(h, out_dim, bias=True)
+        self.n_blocks = n_blocks
+        self.clip_size = clip_size
+        
+        self.use_projector = use_projector
+        if use_projector:
+            self.projector = nn.Sequential(
+                nn.LayerNorm(clip_size),
+                nn.GELU(),
+                nn.Linear(clip_size, 2048),
+                nn.LayerNorm(2048),
+                nn.GELU(),
+                nn.Linear(2048, 2048),
+                nn.LayerNorm(2048),
+                nn.GELU(),
+                nn.Linear(2048, clip_size)
+            )
+        
+    def forward(self, x):
+        '''
+            bs, 1, 15724 -> bs, 32, h
+            bs, 32, h -> bs, 32h
+            b2, 32h -> bs, 768
+        '''
+        # if x.ndim == 4:
+        #     # case when we passed 3D data of shape [N, 81, 104, 83]
+        #     assert x.shape[2] == 17 and x.shape[3] == 128
+        #     # [N, 699192]
+        x = x.reshape(x.shape[0], -1)
+
+        x = self.lin0(x)  # bs, h
+        residual = x
+        for res_block in range(self.n_blocks):
+            x = self.mlp[res_block](x)
+            x += residual
+            residual = x
+        x = x.reshape(x.shape[0], -1)
+        x = self.lin1(x)
+        if self.use_projector:
+            return x, self.projector(x.reshape(x.shape[0], -1, self.clip_size))
+        return x
+
 
 # Code from GitHub repository of: Lima, E.M., Ribeiro, A.H., Paixão, G.M.M. et al. Deep neural network-estimated electrocardiographic age as a 
 # mortality predictor. Nat Commun 12, 5117 (2021). https://doi.org/10.1038/s41467-021-25351-7. 
@@ -176,7 +280,7 @@ class ResNet1d(nn.Module):
     """
 
     def __init__(self, n_channels, n_samples, net_filter_size, net_seq_length, n_classes, kernel_size=17,
-                 dropout_rate=0.5):
+                 dropout_rate=0.5, **kwargs):
         super(ResNet1d, self).__init__()
         # my modifications!
         input_dim = (n_channels, n_samples)
@@ -226,6 +330,85 @@ class ResNet1d(nn.Module):
         # Fully conected layer
         x = self.lin(x)
         return x
+
+
+# Code from GitHub repository of: Lima, E.M., Ribeiro, A.H., Paixão, G.M.M. et al. Deep neural network-estimated electrocardiographic age as a 
+# mortality predictor. Nat Commun 12, 5117 (2021). https://doi.org/10.1038/s41467-021-25351-7. 
+class ResNet1d_Subject(nn.Module):
+    """Residual network for unidimensional signals.
+    Parameters
+    ----------
+    input_dim : tuple
+        Input dimensions. Tuple containing dimensions for the neural network
+        input tensor. Should be like: ``(n_filters, n_samples)``.
+    blocks_dim : list of tuples
+        Dimensions of residual blocks.  The i-th tuple should contain the dimensions
+        of the output (i-1)-th residual block and the input to the i-th residual
+        block. Each tuple shoud be like: ``(n_filters, n_samples)``. `n_samples`
+        for two consecutive samples should always decrease by an integer factor.
+    dropout_rate: float [0, 1), optional
+        Dropout rate used in all Dropout layers. Default is 0.8
+    kernel_size: int, optional
+        Kernel size for convolutional layers. The current implementation
+        only supports odd kernel sizes. Default is 17.
+    References
+    ----------
+    .. [1] K. He, X. Zhang, S. Ren, and J. Sun, "Identity Mappings in Deep Residual Networks,"
+           arXiv:1603.05027, Mar. 2016. https://arxiv.org/pdf/1603.05027.pdf.
+    .. [2] K. He, X. Zhang, S. Ren, and J. Sun, "Deep Residual Learning for Image Recognition," in 2016 IEEE Conference
+           on Computer Vision and Pattern Recognition (CVPR), 2016, pp. 770-778. https://arxiv.org/pdf/1512.03385.pdf
+    """
+
+    def __init__(self, n_channels, n_samples, net_filter_size, net_seq_length, n_classes, kernel_size=17,
+                 dropout_rate=0.5, subject_ids={}, **kwargs):
+        super(ResNet1d_Subject, self).__init__()
+        # my modifications!
+        input_dim = (n_channels, n_samples)
+        blocks_dim = list(zip(net_filter_size, net_seq_length))
+        if n_classes == 2:
+            n_classes = 1
+
+        # First layers
+        n_filters_in, n_filters_out = input_dim[0], blocks_dim[0][0]
+        n_samples_in, n_samples_out = input_dim[1], blocks_dim[0][1]
+        downsample = _downsample(n_samples_in, n_samples_out)
+        padding = _padding(downsample, kernel_size)
+        self.subj_spec_conv = subject_module(subject_ids=subject_ids, n_filters_in=n_filters_in, n_filters_out=n_filters_out, 
+                                             kernel_size=kernel_size, downsample=downsample, padding=padding)
+
+        # Residual block layers
+        self.res_blocks = []
+        for i, (n_filters, n_samples) in enumerate(blocks_dim):
+            n_filters_in, n_filters_out = n_filters_out, n_filters
+            n_samples_in, n_samples_out = n_samples_out, n_samples
+            downsample = _downsample(n_samples_in, n_samples_out)
+            resblk1d = ResBlock1d(n_filters_in, n_filters_out, downsample, kernel_size, dropout_rate)
+            self.add_module('resblock1d_{0}'.format(i), resblk1d)
+            self.res_blocks += [resblk1d]
+
+        # Linear layer
+        n_filters_last, n_samples_last = blocks_dim[-1]
+        last_layer_dim = n_filters_last * n_samples_last
+        self.lin = nn.Linear(last_layer_dim, n_classes)
+        self.n_blk = len(blocks_dim)
+
+    def forward(self, x, subj_id):
+        """Implement ResNet1d forward propagation"""
+        # First layers
+        x = self.subj_spec_conv(x, subj_id)
+
+        # Residual blocks
+        y = x
+        for blk in self.res_blocks:
+            x, y = blk(x, y)
+
+        # Flatten array
+        x = x.view(x.size(0), -1)
+
+        # Fully conected layer
+        # x = self.lin(x)
+        return x
+
     
 # The model proposed by the work: S. Palazzo, C. Spampinato, I. Kavasidis, D. Giordano, J. Schmidt, M. Shah,
 # Decoding Brain Representations by Multimodal Learning of Neural Activity and Visual Features,

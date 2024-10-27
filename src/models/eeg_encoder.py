@@ -68,6 +68,13 @@ class EEGEncoder(nn.Module): # TODO: now every architecture has a classification
             self.eeg_backbone = eeg_architectures.lstm(input_size=n_channels, lstm_size=kwargs['lstm_size'],
                                            lstm_layers=kwargs['lstm_layers'], device=device)
             print(get_graph_node_names(self.eeg_backbone))
+        elif backbone == 'brain-mlp':
+            self.eeg_backbone = eeg_architectures.BrainMLP(out_dim=embed_dim, in_dim=int(n_channels*n_samples), clip_size=embed_dim)
+            if self.checkpoint:
+                self.eeg_backbone.load_state_dict(self.checkpoint) 
+            self.feature_dim = embed_dim
+            self.return_node = 'projector.8'
+            print(get_graph_node_names(self.eeg_backbone))
         elif backbone == 'resnet1d':
             net_filter_size = kwargs['net_filter_size'] if 'net_filter_size' in kwargs.keys() else [64, 128, 196, 256, 320] # [16, 16, 32, 32, 64]
             net_seq_length = kwargs['net_seq_length'] if 'net_seq_length' in kwargs.keys() else [n_samples, 128, 64, 32, 16]
@@ -83,20 +90,38 @@ class EEGEncoder(nn.Module): # TODO: now every architecture has a classification
             self.feature_dim = list(self.eeg_backbone.children())[-1].in_features
             self.return_node = 'view'
             print(get_graph_node_names(self.eeg_backbone))
+        elif backbone == 'resnet1d_subj':
+            net_filter_size = kwargs['net_filter_size'] if 'net_filter_size' in kwargs.keys() else [64, 128, 196, 256, 320] # [16, 16, 32, 32, 64]
+            net_seq_length = kwargs['net_seq_length'] if 'net_seq_length' in kwargs.keys() else [n_samples, 128, 64, 32, 16]
+            self.eeg_backbone = eeg_architectures.ResNet1d_Subject(
+                n_channels=n_channels, 
+                n_samples=n_samples, 
+                net_filter_size=net_filter_size,     
+                net_seq_length=net_seq_length, 
+                n_classes=n_classes,
+                subject_ids=kwargs['subject_ids'])
+            if self.checkpoint:
+                self.eeg_backbone.load_state_dict(self.checkpoint) 
+            self.feature_dim = list(self.eeg_backbone.children())[-1].in_features
+            self.return_node = 'view'
         else:
             raise NotImplementedError
         
-        self.eeg_backbone = create_feature_extractor(self.eeg_backbone, return_nodes=[self.return_node])
+        if backbone != 'resnet1d_subj':
+            self.eeg_backbone = create_feature_extractor(self.eeg_backbone, return_nodes=[self.return_node])
         print("feature dim = ", self.feature_dim)
         # self.feature_dim = self.eeg_backbone(
         #     torch.zeros(1, 1, n_channels, n_samples)).contiguous().view(-1).size()[0]
         self.repr_layer = torch.nn.Linear(self.feature_dim, embed_dim)
 
-    def forward(self, x):
+    def forward(self, x, subject_id=None):
     
-        if self.backbone_type == "resnet1d":
+        if self.backbone_type == "resnet1d" or self.backbone_type == "resnet1d_subj":
             x = x.squeeze(1)
-        out = self.eeg_backbone(x)[self.return_node]
+        if self.backbone_type == "resnet1d_subj":
+            out = self.eeg_backbone(x, subject_id)
+        else:
+            out = self.eeg_backbone(x)[self.return_node]
         out = out.view(out.size(0), -1)
         embedding = self.repr_layer(out)
         
@@ -134,8 +159,8 @@ class MLPHead(nn.Module):
 
 if __name__ == "__main__":
     path_to_chkpnt = "/proj/rep-learning-robotics/users/x_nonra/data/asif_out/spampinato_eegnet_2024-09-16_11-21-04/eegnet_spampinato.pth"
-    model = EEGEncoder(backbone="eegnet", model_path=path_to_chkpnt, device="cuda" if torch.cuda.is_available() else "cpu")
-    x_in = torch.randn((1, 1, 128, 512))
+    model = EEGEncoder(backbone="brain-mlp", embed_dim=768, n_channels=17, n_samples=128, device="cuda" if torch.cuda.is_available() else "cpu")
+    x_in = torch.randn((1, 1, 17, 128))
     x_out = model(x_in)
     print(x_out.shape)
 

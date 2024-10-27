@@ -27,7 +27,9 @@ model_configs = {
         'eegnet': {},
         'lstm': {'lstm_size': 128, 'lstm_layers': 1},
         'EEGChannelNet': {},
-        'resnet1d': {}
+        'resnet1d': {},
+        'resnet1d_subj': {},
+        'brain-mlp': {}
     }
 
 def seed_everything(seed_val):
@@ -66,10 +68,12 @@ def parse_args():
     parser.add_argument('--epoch', type=int, default=1000, help="Number of epochs for pretraining")
     parser.add_argument('--finetune_epoch',  type=int, default=50, help="Number of epochs for finetuning (if the downstream task is classification)")
     parser.add_argument('--warmup', type=int, default=50)
+    parser.add_argument('--scheduler', type=str, default="plateau")
     parser.add_argument('--temperature', type=float, default=0.04)
     parser.add_argument('--n_workers', type=int, default=4)
     parser.add_argument('--downstream', type=str, default=None)
     parser.add_argument('--separate_test', action="store_true")
+    parser.add_argument('--return_subject_id', action="store_true")
     parser.add_argument('-b', '--batch', type=int, default=512)
     parser.add_argument('--lr', type=float, default=0.0001)
     parser.add_argument('--seed', type=int, default=42)
@@ -79,7 +83,8 @@ def parse_args():
 def return_dataloaders(dataset_nm, data_pth, sid, n_classes, batch, num_workers, seed_val, split_path, device_type, separate_test=False, **kwargs):
 
     data, ds_configs = utils.load_dataset(dataset_name=dataset_nm, data_path=paths['eeg_data'], n_classes=n_classes, sid=sid, load_img=kwargs['load_img'], 
-                                          pretrain_eeg=kwargs['pretrain_eeg'], select_channels=kwargs['select_channels'], subj_training_ratio=kwargs['subj_training_ratio'])
+                                          pretrain_eeg=kwargs['pretrain_eeg'], select_channels=kwargs['select_channels'], subj_training_ratio=kwargs['subj_training_ratio'],
+                                          return_subject_id=kwargs['return_subject_id'])
     print(ds_configs)
     
     g = torch.Generator().manual_seed(seed_val)
@@ -107,7 +112,7 @@ def return_dataloaders(dataset_nm, data_pth, sid, n_classes, batch, num_workers,
             train_data, val_data = torch.utils.data.random_split(
                 data, [0.8, 0.2], generator=g)
             test_data, _ = utils.load_dataset(dataset_name=dataset_nm, data_path=paths['eeg_data'], n_classes=n_classes, sid=kwargs['test_subject'], test=True, load_img=kwargs['load_img'], 
-                                              pretrain_eeg=kwargs['pretrain_eeg'], select_channels=kwargs['select_channels'], subj_training_ratio=1.0)
+                                              pretrain_eeg=kwargs['pretrain_eeg'], select_channels=kwargs['select_channels'], subj_training_ratio=1.0, return_subject_id=kwargs['return_subject_id'])
         train_dl = DataLoader(train_data, batch_size=batch, shuffle=True,
                                 drop_last=True,
                                 num_workers=num_workers,
@@ -154,15 +159,21 @@ if __name__ == "__main__":
 
         if args.net_filter_size:
             model_configs['resnet1d']['net_filter_size'] = args.net_filter_size
+            model_configs['resnet1d_subj']['net_filter_size'] = args.net_filter_size
 
         if args.net_seq_length:
             model_configs['resnet1d']['net_seq_length'] = args.net_seq_length
+            model_configs['resnet1d_subj']['net_seq_length'] = args.net_seq_length
+
+        if args.checkpoint:
+            model_configs['resnet1d_subj']['subject_ids'] = [str(s) for s in range(10)]
+        else:
+            model_configs['resnet1d_subj']['subject_ids'] = [str(s) for s in subject_id] if isinstance(subject_id, list) else [str(subject_id)]
 
         if separate_test_set and downstream_task == "classification":
             warnings.warn("The test set won't be used to finetune the classifier. seperate_test will be set to False")
             separate_test_set = False
         
-        print("separate_test= ", separate_test_set)
         print("training subjects: ", subject_id)
         print("test subjects: ", test_subject if test_subject is not None else subject_id)
 
@@ -213,6 +224,7 @@ if __name__ == "__main__":
             pretrain_eeg=True if modality == "eeg-eeg" else False,
             separate_test=separate_test_set,
             select_channels=channels,
+            return_subject_id=args.return_subject_id,
             subj_training_ratio=args.subj_training_ratio if args.subj_training_ratio > 0 else 0.01,
             device_type=device)    
         
@@ -250,14 +262,27 @@ if __name__ == "__main__":
 
         if args.checkpoint:
             checkpoint = torch.load(args.checkpoint)['model_state_dict']
-            eeg_encoder.load_state_dict(checkpoint)
+            eeg_encoder.load_state_dict(checkpoint, strict=False)
             eeg_encoder.to(device)
-        
+
+            # if eeg_enc_name == "resnet1d_subj":
+            #     # Separate parameter groups
+            #     subject_params = [p for n, p in eeg_encoder.subj_spec_conv.conv1[str(subject_id)].named_parameters()]
+            #     other_params = [p for n, p in eeg_encoder.named_parameters() if n not in [f'subj_spec_conv.conv1.{str(subject_id)}.weight']]
+            
         if epochs > 0:
             if modality == "eeg-img":
-                optim = torch.optim.AdamW(itertools.chain(eeg_encoder.parameters(), img_encoder.parameters()), lr=min_lr, weight_decay=weight_decay)
+                # if eeg_enc_name == "resnet1d_subj" and args.checkpoint:
+                #     optimizer = torch.optim.Adam([
+                #         {'params': subject_params, 'lr': min_lr if warmup_epochs>0 else lr, 'weight_decay': weight_decay},     # Subject-specific learning rate
+                #         {'params': other_params, 'lr': min_lr if warmup_epochs>0 else lr, 'weight_decay': weight_decay}        # General learning rate
+                #     ])
+                # else:
+                optim = torch.optim.AdamW(itertools.chain(eeg_encoder.parameters(), img_encoder.parameters()), 
+                                        lr=min_lr if warmup_epochs>0 else lr, weight_decay=weight_decay)
             else:
-                optim = torch.optim.AdamW(eeg_encoder.parameters(), lr=min_lr, weight_decay=weight_decay)
+                optim = torch.optim.AdamW(eeg_encoder.parameters(), 
+                                          lr=min_lr if warmup_epochs>0 else lr, weight_decay=weight_decay)
             trainer = BimodalTrainer(
                 eeg_encoder=eeg_encoder,
                 image_encoder=img_encoder,
@@ -265,17 +290,25 @@ if __name__ == "__main__":
                 loss=loss, 
                 epochs=epochs, 
                 warmup_epochs=warmup_epochs,
+                scheduler=args.scheduler,
                 lr=lr, min_lr=min_lr,  
                 mixed_precision=True,
                 num_classes=n_classes,
+                return_subject_id=args.return_subject_id,
                 save_path=paths["save_path"], 
                 filename=f'{eeg_enc_name}_{dataset_name}', 
                 device=device
                 )
             best_eeg_encoder = trainer.train(train_data_loader, val_data_loader)
             eeg_encoder.load_state_dict(best_eeg_encoder['model_state_dict']) # TODO What if we also train the image encoder (embedding layer)
-            test_loss = trainer.evaluate(eeg_encoder, img_encoder, test_data_loader)
-            print(f"Test Loss: {test_loss}")
+            # test_loss = trainer.evaluate(eeg_encoder, img_encoder, test_data_loader)
+            # print(f"Test Loss: {test_loss}")
+
+        if test_subject is not None and downstream_task is not None:
+            if test_subject not in model_configs['resnet1d_subj']['subject_ids'] and eeg_enc_name == "resnet1d_subj":
+                model_configs['resnet1d_subj']['subject_ids'].append(test_subject)
+                eeg_encoder.eeg_backbone.subj_spec_conv.add_subject(str(test_subject))
+                eeg_encoder.to(device)
 
         print(f"Performing the Downstream Task for S{test_subject if test_subject is not None else subject_id} (tr={args.subj_training_ratio})")
         if downstream_task == "classification":
@@ -290,6 +323,7 @@ if __name__ == "__main__":
                 load_img=False,
                 pretrain_eeg=False,
                 separate_test=separate_test_set,
+                return_subject_id=args.return_subject_id,
                 select_channels=channels,
                 subj_training_ratio=args.subj_training_ratio,
                 device_type=device)
@@ -300,7 +334,7 @@ if __name__ == "__main__":
                 dataset_name=dataset_name, n_channels=data_configs['n_channels'], n_samples=data_configs['n_samples'], n_classes=n_classes, 
                 finetune_epochs=finetune_epochs, warmup_epochs=20, lr=lr, min_lr=min_lr, weight_decay=weight_decay,
                 save_path=paths['save_path'],
-                pretrained_encoder=eeg_encoder, model_configs=model_configs, device=device
+                pretrained_encoder=eeg_encoder, return_subject_id=args.return_subject_id, model_configs=model_configs, device=device
             )
         elif downstream_task == "retrieval":
             _, _, test_data_loader, data_configs = return_dataloaders(
@@ -314,10 +348,11 @@ if __name__ == "__main__":
                 load_img=True,
                 pretrain_eeg=False,
                 separate_test=separate_test_set,
+                return_subject_id=args.return_subject_id,
                 select_channels=channels,
                 subj_training_ratio=args.subj_training_ratio if args.subj_training_ratio > 0 else 0.01,
                 device_type=device)
-            top1_acc, top3_acc, top5_acc = downstream.retrieval(eeg_encoder, img_encoder, test_data_loader, device=device)
+            top1_acc, top3_acc, top5_acc = downstream.retrieval(eeg_encoder, img_encoder, test_data_loader, return_subject_id=args.return_subject_id, device=device)
             topk_scores = {
                 'top1': top1_acc,
                 'top3': top3_acc,

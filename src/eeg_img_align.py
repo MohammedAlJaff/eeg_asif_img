@@ -74,6 +74,7 @@ def parse_args():
     parser.add_argument('--downstream', type=str, default=None)
     parser.add_argument('--separate_test', action="store_true")
     parser.add_argument('--return_subject_id', action="store_true")
+    parser.add_argument('--subj_spec_epochs', type=int, default=0)
     parser.add_argument('-b', '--batch', type=int, default=512)
     parser.add_argument('--lr', type=float, default=0.0001)
     parser.add_argument('--seed', type=int, default=42)
@@ -265,21 +266,23 @@ if __name__ == "__main__":
             eeg_encoder.load_state_dict(checkpoint, strict=False)
             eeg_encoder.to(device)
 
-            # if eeg_enc_name == "resnet1d_subj":
-            #     # Separate parameter groups
-            #     subject_params = [p for n, p in eeg_encoder.subj_spec_conv.conv1[str(subject_id)].named_parameters()]
-            #     other_params = [p for n, p in eeg_encoder.named_parameters() if n not in [f'subj_spec_conv.conv1.{str(subject_id)}.weight']]
+            if eeg_enc_name == "resnet1d_subj":
+                # Separate parameter groups
+                for n, param in eeg_encoder.named_parameters():
+                    print(n)
+                subject_params = [p for n, p in eeg_encoder.eeg_backbone.subj_spec_conv.conv1[str(subject_id)].named_parameters()]
+                other_params = [p for n, p in eeg_encoder.named_parameters() if n not in [f'eeg_backbone.subj_spec_conv.conv1.{str(subject_id)}.weight']]
             
         if epochs > 0:
             if modality == "eeg-img":
-                # if eeg_enc_name == "resnet1d_subj" and args.checkpoint:
-                #     optimizer = torch.optim.Adam([
-                #         {'params': subject_params, 'lr': min_lr if warmup_epochs>0 else lr, 'weight_decay': weight_decay},     # Subject-specific learning rate
-                #         {'params': other_params, 'lr': min_lr if warmup_epochs>0 else lr, 'weight_decay': weight_decay}        # General learning rate
-                #     ])
-                # else:
-                optim = torch.optim.AdamW(itertools.chain(eeg_encoder.parameters(), img_encoder.parameters()), 
-                                        lr=min_lr if warmup_epochs>0 else lr, weight_decay=weight_decay)
+                if eeg_enc_name == "resnet1d_subj" and args.checkpoint and args.subj_spec_epochs > 0:
+                    optim = torch.optim.AdamW([
+                        {'params': subject_params, 'lr': min_lr if warmup_epochs>0 else lr, 'weight_decay': weight_decay},     # Subject-specific learning rate
+                        {'params': other_params, 'lr': min_lr if warmup_epochs>0 else lr, 'weight_decay': weight_decay}        # General learning rate
+                    ])
+                else:
+                    optim = torch.optim.AdamW(itertools.chain(eeg_encoder.parameters(), img_encoder.parameters()), 
+                                            lr=min_lr if warmup_epochs>0 else lr, weight_decay=weight_decay)
             else:
                 optim = torch.optim.AdamW(eeg_encoder.parameters(), 
                                           lr=min_lr if warmup_epochs>0 else lr, weight_decay=weight_decay)
@@ -297,6 +300,8 @@ if __name__ == "__main__":
                 return_subject_id=args.return_subject_id,
                 save_path=paths["save_path"], 
                 filename=f'{eeg_enc_name}_{dataset_name}', 
+                common_params = other_params if eeg_enc_name == "resnet1d_subj" and args.checkpoint else None,
+                initial_epochs=args.subj_spec_epochs,
                 device=device
                 )
             best_eeg_encoder = trainer.train(train_data_loader, val_data_loader)
@@ -326,6 +331,8 @@ if __name__ == "__main__":
                 return_subject_id=args.return_subject_id,
                 select_channels=channels,
                 subj_training_ratio=args.subj_training_ratio,
+                common_params=other_params if eeg_enc_name == "resnet1d_subj" and args.checkpoint else None,
+                initial_epochs=args.subj_spec_epochs,
                 device_type=device)
             loaders = {'train': train_data_loader, 'val': val_data_loader, 'test': test_data_loader} 
             test_loss, test_acc = downstream.classification(

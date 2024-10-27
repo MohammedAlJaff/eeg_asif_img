@@ -195,7 +195,9 @@ class BimodalTrainer:
         self.min_lr = kwargs['min_lr']
         self.warmup_epochs = kwargs['warmup_epochs']
         self.scheduler = kwargs['scheduler']
-
+        self.initial_epochs = kwargs['initial_epochs'] if 'initial_epochs' in kwargs else 0
+        self.common_params = kwargs['common_params']
+        
         self.save_path = save_path
         self.filename = filename
         self.patience = 150
@@ -220,6 +222,15 @@ class BimodalTrainer:
         print("Training Started...")
         for epoch in range(self.epochs):
             print(f"Epoch {epoch}/{self.epochs}.")
+
+            # Update subject-specific parameters only for initial epochs
+            if epoch < self.initial_epochs:
+                for p in self.common_params:
+                    p.requires_grad = False  # Freeze non-subject-specific weights
+            else:
+                for p in self.common_params:
+                    p.requires_grad = True   # Unfreeze all weights after initial epochs
+
             steps = 0
             loss_epoch = []
             self.eeg_encoder.train()

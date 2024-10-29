@@ -29,6 +29,7 @@ model_configs = {
         'EEGChannelNet': {},
         'resnet1d': {},
         'resnet1d_subj': {},
+        'resnet1d_subj_resblk': {},
         'brain-mlp': {}
     }
 
@@ -60,6 +61,7 @@ def parse_args():
     parser.add_argument('--n_classes', type=int, default=1654)
     parser.add_argument('--eeg_enc', type=str, default="resnet1d", help="EEG Encoder")
     parser.add_argument('--img_enc', type=str, default="CLIP_IMG", help="Image Encoder")
+    parser.add_argument('--img_enc_model', type=str, default=None, help="Image Encoder Model")
     parser.add_argument('--loss', type=str, default="clip-loss", help="Loss function")
     parser.add_argument('--embed_dim', type=int, default=768)
     parser.add_argument('--net_filter_size', type=int, nargs='+', default=None)
@@ -161,15 +163,17 @@ if __name__ == "__main__":
         if args.net_filter_size:
             model_configs['resnet1d']['net_filter_size'] = args.net_filter_size
             model_configs['resnet1d_subj']['net_filter_size'] = args.net_filter_size
+            model_configs['resnet1d_subj_resblk']['net_filter_size'] = args.net_filter_size
 
         if args.net_seq_length:
             model_configs['resnet1d']['net_seq_length'] = args.net_seq_length
             model_configs['resnet1d_subj']['net_seq_length'] = args.net_seq_length
+            model_configs['resnet1d_subj_resblk']['net_seq_length'] = args.net_seq_length
 
         if args.checkpoint:
-            model_configs['resnet1d_subj']['subject_ids'] = [str(s) for s in range(10)]
+            model_configs[eeg_enc_name]['subject_ids'] = [str(s) for s in range(10)]
         else:
-            model_configs['resnet1d_subj']['subject_ids'] = [str(s) for s in subject_id] if isinstance(subject_id, list) else [str(subject_id)]
+            model_configs[eeg_enc_name]['subject_ids'] = [str(s) for s in subject_id] if isinstance(subject_id, list) else [str(subject_id)]
 
         if separate_test_set and downstream_task == "classification":
             warnings.warn("The test set won't be used to finetune the classifier. seperate_test will be set to False")
@@ -234,6 +238,7 @@ if __name__ == "__main__":
                 backbone=img_enc_name,
                 embed_dim=None,
                 add_ln_layer=False,
+                model_name=args.img_enc_model if args.img_enc_model is not None else "openai/clip-vit-base-patch32",
             )
             img_encoder = img_encoder.float()
 
@@ -253,6 +258,9 @@ if __name__ == "__main__":
             **model_configs[eeg_enc_name]
             )
         eeg_encoder = eeg_encoder.float()
+        eeg_encoder.to(device)
+        for n, p in eeg_encoder.named_parameters():
+            print(n)
 
         if args.loss == "clip-loss":
             loss = CLIPLoss(temperature=args.temperature)
@@ -268,10 +276,11 @@ if __name__ == "__main__":
 
             if eeg_enc_name == "resnet1d_subj":
                 # Separate parameter groups
-                for n, param in eeg_encoder.named_parameters():
-                    print(n)
                 subject_params = [p for n, p in eeg_encoder.eeg_backbone.subj_spec_conv.conv1[str(subject_id)].named_parameters()]
                 other_params = [p for n, p in eeg_encoder.named_parameters() if n not in [f'eeg_backbone.subj_spec_conv.conv1.{str(subject_id)}.weight']]
+            elif eeg_enc_name == "resnet1d_subj_resblk":
+                subject_params = [p for n, p in eeg_encoder.eeg_backbone.resblock1d_4.res_blocks[str(subject_id)].named_parameters()]
+                other_params = [p for n, p in eeg_encoder.named_parameters() if n not in [f'eeg_backbone.resblock1d_4.res_blocks.{str(subject_id)}.weight']]
             
         if epochs > 0:
             if modality == "eeg-img":
@@ -310,8 +319,8 @@ if __name__ == "__main__":
             # print(f"Test Loss: {test_loss}")
 
         if test_subject is not None and downstream_task is not None:
-            if test_subject not in model_configs['resnet1d_subj']['subject_ids'] and eeg_enc_name == "resnet1d_subj":
-                model_configs['resnet1d_subj']['subject_ids'].append(test_subject)
+            if "subj" in eeg_enc_name and test_subject not in model_configs[eeg_enc_name]['subject_ids']:
+                model_configs[eeg_enc_name]['subject_ids'].append(test_subject)
                 eeg_encoder.eeg_backbone.subj_spec_conv.add_subject(str(test_subject))
                 eeg_encoder.to(device)
 

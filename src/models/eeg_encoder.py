@@ -104,10 +104,24 @@ class EEGEncoder(nn.Module): # TODO: now every architecture has a classification
                 self.eeg_backbone.load_state_dict(self.checkpoint) 
             self.feature_dim = list(self.eeg_backbone.children())[-1].in_features
             self.return_node = 'view'
+        elif backbone == 'resnet1d_subj_resblk':
+            net_filter_size = kwargs['net_filter_size'] if 'net_filter_size' in kwargs.keys() else [64, 128, 196, 256, 320]
+            net_seq_length = kwargs['net_seq_length'] if 'net_seq_length' in kwargs.keys() else [n_samples, 128, 64, 32, 16]
+            self.eeg_backbone = eeg_architectures.ResNet1d_Subj_ResBlk(
+                n_channels=n_channels, 
+                n_samples=n_samples, 
+                net_filter_size=net_filter_size,     
+                net_seq_length=net_seq_length, 
+                n_classes=n_classes,
+                subject_ids=kwargs['subject_ids'])
+            if self.checkpoint:
+                self.eeg_backbone.load_state_dict(self.checkpoint) 
+            self.feature_dim = list(self.eeg_backbone.children())[-1].in_features
+            self.return_node = 'view'
         else:
             raise NotImplementedError
         
-        if backbone != 'resnet1d_subj':
+        if 'subj' not in backbone:
             self.eeg_backbone = create_feature_extractor(self.eeg_backbone, return_nodes=[self.return_node])
         print("feature dim = ", self.feature_dim)
         # self.feature_dim = self.eeg_backbone(
@@ -116,9 +130,9 @@ class EEGEncoder(nn.Module): # TODO: now every architecture has a classification
 
     def forward(self, x, subject_id=None):
     
-        if self.backbone_type == "resnet1d" or self.backbone_type == "resnet1d_subj":
+        if "resnet1d" in self.backbone_type:
             x = x.squeeze(1)
-        if self.backbone_type == "resnet1d_subj":
+        if "subj" in self.backbone_type:
             out = self.eeg_backbone(x, subject_id)
         else:
             out = self.eeg_backbone(x)[self.return_node]

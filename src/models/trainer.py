@@ -202,7 +202,7 @@ class BimodalTrainer:
         self.filename = filename
         self.patience = 150
         self.clip_grad = 0.8
-        self.log_every = 50
+        self.log_every = 0
 
     def train(self, train_data_loader: DataLoader, val_data_loader: DataLoader):
         scaler = GradScaler(enabled=self.mixed_precision)
@@ -224,12 +224,13 @@ class BimodalTrainer:
             print(f"Epoch {epoch}/{self.epochs}.")
 
             # Update subject-specific parameters only for initial epochs
-            if epoch < self.initial_epochs:
-                for p in self.common_params:
-                    p.requires_grad = False  # Freeze non-subject-specific weights
-            else:
-                for p in self.common_params:
-                    p.requires_grad = True   # Unfreeze all weights after initial epochs
+            if self.common_params is not None:
+                if epoch < self.initial_epochs:
+                    for p in self.common_params:
+                        p.requires_grad = False  # Freeze non-subject-specific weights
+                else:
+                    for p in self.common_params:
+                        p.requires_grad = True   # Unfreeze all weights after initial epochs
 
             steps = 0
             loss_epoch = []
@@ -313,7 +314,7 @@ class BimodalTrainer:
                 "lr": current_lr
             })
 
-            if epoch % self.log_every == 0:
+            if self.log_every != 0 and epoch % self.log_every == 0:
                 torch.save(best_model, os.path.join(self.save_path, self.filename + f"_{epoch}" + ".pth"))
 
         print("Finished training.")

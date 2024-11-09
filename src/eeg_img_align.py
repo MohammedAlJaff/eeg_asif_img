@@ -62,6 +62,7 @@ def parse_args():
     parser.add_argument('--eeg_enc', type=str, default="resnet1d", help="EEG Encoder")
     parser.add_argument('--img_enc', type=str, default="CLIP_IMG", help="Image Encoder")
     parser.add_argument('--img_enc_model', type=str, default=None, help="Image Encoder Model")
+    parser.add_argument('--subj_linear', action="store_true")
     parser.add_argument('--loss', type=str, default="clip-loss", help="Loss function")
     parser.add_argument('--embed_dim', type=int, default=768)
     parser.add_argument('--net_filter_size', type=int, nargs='+', default=None)
@@ -71,6 +72,7 @@ def parse_args():
     parser.add_argument('--finetune_epoch',  type=int, default=50, help="Number of epochs for finetuning (if the downstream task is classification)")
     parser.add_argument('--warmup', type=int, default=50)
     parser.add_argument('--scheduler', type=str, default="plateau")
+    parser.add_argument('--patience', type=int, default=25, help="Patience for the reduce_lr_on_plateau scheduler")
     parser.add_argument('--temperature', type=float, default=0.04)
     parser.add_argument('--n_workers', type=int, default=4)
     parser.add_argument('--downstream', type=str, default=None)
@@ -171,7 +173,7 @@ if __name__ == "__main__":
             model_configs['resnet1d_subj_resblk']['net_seq_length'] = args.net_seq_length
 
         if args.checkpoint:
-            model_configs[eeg_enc_name]['subject_ids'] = [str(s) for s in range(10)]
+            model_configs[eeg_enc_name]['subject_ids'] = [str(s) for s in range(1, 11)]
         else:
             model_configs[eeg_enc_name]['subject_ids'] = [str(s) for s in subject_id] if isinstance(subject_id, list) else [str(subject_id)]
 
@@ -200,9 +202,9 @@ if __name__ == "__main__":
 
         if modality == "eeg-img":
             if test_subject is None:
-                directory_name = f"{start_str}_{dataset_name}_s{subject_id}_r{args.subj_training_ratio}_{eeg_enc_name}_{img_enc_name}_"
+                directory_name = f"{start_str}_{dataset_name}_s{subject_id}_r{args.subj_training_ratio}_{eeg_enc_name}(subj{args.subj_linear})_{img_enc_name}_"
             else:
-                directory_name = f"{start_str}_{dataset_name}_ts{test_subject}_r{args.subj_training_ratio}_{eeg_enc_name}_{img_enc_name}_"
+                directory_name = f"{start_str}_{dataset_name}_ts{test_subject}_r{args.subj_training_ratio}_{eeg_enc_name}(subj{args.subj_linear})_{img_enc_name}_"
         else:
             if test_subject is None:
                 directory_name = f"{start_str}_{dataset_name}_s{subject_id}_r{args.subj_training_ratio}_{eeg_enc_name}_"
@@ -254,13 +256,14 @@ if __name__ == "__main__":
             n_samples=data_configs["n_samples"],
             n_classes=n_classes,
             model_path=None,
+            subject_specific=args.subj_linear,
             device=device, 
             **model_configs[eeg_enc_name]
             )
         eeg_encoder = eeg_encoder.float()
         eeg_encoder.to(device)
-        for n, p in eeg_encoder.named_parameters():
-            print(n)
+        # for n, p in eeg_encoder.named_parameters():
+        #     print(n)
 
         if args.loss == "clip-loss":
             loss = CLIPLoss(temperature=args.temperature)
@@ -277,14 +280,23 @@ if __name__ == "__main__":
             if eeg_enc_name == "resnet1d_subj":
                 # Separate parameter groups
                 subject_params = [p for n, p in eeg_encoder.eeg_backbone.subj_spec_conv.conv1[str(subject_id)].named_parameters()]
-                other_params = [p for n, p in eeg_encoder.named_parameters() if n not in [f'eeg_backbone.subj_spec_conv.conv1.{str(subject_id)}.weight']]
+                other_params = [p for n, p in eeg_encoder.named_parameters() if f'eeg_backbone.subj_spec_conv.conv1.{str(subject_id)}.' not in n]
             elif eeg_enc_name == "resnet1d_subj_resblk":
                 subject_params = [p for n, p in eeg_encoder.eeg_backbone.resblock1d_4.res_blocks[str(subject_id)].named_parameters()]
-                other_params = [p for n, p in eeg_encoder.named_parameters() if n not in [f'eeg_backbone.resblock1d_4.res_blocks.{str(subject_id)}.weight']]
+                other_params = [p for n, p in eeg_encoder.named_parameters() if f'eeg_backbone.resblock1d_4.res_blocks.{str(subject_id)}.' not in n]
+            elif args.subj_linear:
+                subject_params = [p for n, p in eeg_encoder.repr_layer.lin[str(subject_id)][1].named_parameters()]
+                other_params = [p for n, p in eeg_encoder.named_parameters() if f'repr_layer.lin.{str(subject_id)}.1' not in n]
+            else:
+                subject_params = None
+                other_params = None
+        else:
+            subject_params = None
+            other_params = None
             
         if epochs > 0:
             if modality == "eeg-img":
-                if eeg_enc_name == "resnet1d_subj" and args.checkpoint and args.subj_spec_epochs > 0:
+                if ("subj" in eeg_enc_name or args.subj_linear) and args.checkpoint and args.subj_spec_epochs > 0:
                     optim = torch.optim.AdamW([
                         {'params': subject_params, 'lr': min_lr if warmup_epochs>0 else lr, 'weight_decay': weight_decay},     # Subject-specific learning rate
                         {'params': other_params, 'lr': min_lr if warmup_epochs>0 else lr, 'weight_decay': weight_decay}        # General learning rate
@@ -307,9 +319,10 @@ if __name__ == "__main__":
                 mixed_precision=True,
                 num_classes=n_classes,
                 return_subject_id=args.return_subject_id,
+                patience=args.patience,
                 save_path=paths["save_path"], 
                 filename=f'{eeg_enc_name}_{dataset_name}', 
-                common_params = other_params if eeg_enc_name == "resnet1d_subj" and args.checkpoint else None,
+                common_params = other_params,
                 initial_epochs=args.subj_spec_epochs,
                 device=device
                 )
@@ -318,11 +331,17 @@ if __name__ == "__main__":
             # test_loss = trainer.evaluate(eeg_encoder, img_encoder, test_data_loader)
             # print(f"Test Loss: {test_loss}")
 
-        if test_subject is not None and downstream_task is not None:
-            if "subj" in eeg_enc_name and test_subject not in model_configs[eeg_enc_name]['subject_ids']:
-                model_configs[eeg_enc_name]['subject_ids'].append(test_subject)
+        test_subject = test_subject if test_subject is not None else subject_id
+        if downstream_task is not None and test_subject not in model_configs[eeg_enc_name]['subject_ids']:
+            model_configs[eeg_enc_name]['subject_ids'].append(test_subject)
+            if eeg_enc_name == "resnet1d_subj":
                 eeg_encoder.eeg_backbone.subj_spec_conv.add_subject(str(test_subject))
-                eeg_encoder.to(device)
+            elif eeg_enc_name == "resnet1d_subj_resblk":
+                eeg_encoder.eeg_backbone.resblock1d_4.add_subject(str(test_subject))  
+            elif args.subj_linear:
+                eeg_encoder.repr_layer.add_subject(str(test_subject))
+            eeg_encoder.to(device)
+
 
         print(f"Performing the Downstream Task for S{test_subject if test_subject is not None else subject_id} (tr={args.subj_training_ratio})")
         if downstream_task == "classification":

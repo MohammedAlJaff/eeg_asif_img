@@ -18,6 +18,7 @@ class EEGEncoder(nn.Module): # TODO: now every architecture has a classification
                  n_samples: int = 512,
                  n_classes: int = 40,
                  model_path: str = None,
+                 subject_specific: bool = False,
                  **kwargs
                  ):
         super(EEGEncoder, self).__init__()
@@ -29,6 +30,7 @@ class EEGEncoder(nn.Module): # TODO: now every architecture has a classification
         self.backbone_type = backbone
         self.embed_dim = embed_dim
         self.checkpoint = torch.load(model_path)['model_state_dict'] if model_path is not None else None
+        self.subject_specific = subject_specific
         
         if self.checkpoint is not None:
             new_state_dict = {}
@@ -126,7 +128,10 @@ class EEGEncoder(nn.Module): # TODO: now every architecture has a classification
         print("feature dim = ", self.feature_dim)
         # self.feature_dim = self.eeg_backbone(
         #     torch.zeros(1, 1, n_channels, n_samples)).contiguous().view(-1).size()[0]
-        self.repr_layer = torch.nn.Linear(self.feature_dim, embed_dim)
+        if subject_specific:
+            self.repr_layer = SubjLinear(self.feature_dim, embed_dim, kwargs['subject_ids'])
+        else:
+            self.repr_layer = torch.nn.Linear(self.feature_dim, embed_dim)
 
     def forward(self, x, subject_id=None):
     
@@ -137,9 +142,46 @@ class EEGEncoder(nn.Module): # TODO: now every architecture has a classification
         else:
             out = self.eeg_backbone(x)[self.return_node]
         out = out.view(out.size(0), -1)
-        embedding = self.repr_layer(out)
+        if self.subject_specific:
+            embedding = self.repr_layer(out, subject_id)
+        else:
+            embedding = self.repr_layer(out)
         
         return embedding.squeeze(dim=1)
+
+
+class SubjLinear(nn.Module):
+    def __init__(self, input_dim, output_dim, subject_ids):
+        super().__init__()
+        self.comm_lin = nn.Linear(input_dim, output_dim)
+        self.lin = nn.ModuleDict({
+            str(subj_id): nn.Sequential(nn.Dropout(0.5), nn.Linear(output_dim, output_dim)) for subj_id in subject_ids
+        })
+        self.input_dim = input_dim
+        self.output_dim = output_dim
+
+    def forward(self, x, subj_id):
+        
+        x = self.comm_lin(x)
+    
+        if isinstance(subj_id, list):
+            x = [self.lin[str(id)](x_i) for id, x_i in zip(subj_id, x)]
+            x = torch.stack(x)  # Stack back into a tensor after processing each element
+        else:
+            x = self.lin[str(subj_id)](x)
+
+        return x
+    
+    def add_subject(self, subj_id):
+        # Check if the subject already exists
+        if subj_id in self.lin.keys():
+            print(f"Subject {subj_id} already exists!")
+        else:
+            # Add a new Conv1d + BatchNorm1d module for the new subject
+            self.lin.update({str(subj_id): nn.Sequential(nn.Dropout(0.25), nn.Linear(self.output_dim, self.output_dim))})
+            print(f"Subject {subj_id} added successfully!")
+
+
 
 class MLPHead(nn.Module):
     def __init__(

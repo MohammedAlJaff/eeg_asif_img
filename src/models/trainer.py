@@ -15,7 +15,7 @@ import copy
 
 class UnimodalTrainer:
     def __init__(self, model: torch.nn.Module, optimizer: torch.optim.Optimizer, loss,
-                 save_path, filename, device='cuda:0', **kwargs):
+                 save_path, filename, patience=25, device='cuda:0', **kwargs):
 
         self.device = device
 
@@ -32,7 +32,7 @@ class UnimodalTrainer:
 
         self.save_path = save_path
         self.filename = filename
-        self.patience = 100
+        self.patience = patience
         self.clip_grad = 0.8
         self.log_every = 100
 
@@ -40,11 +40,11 @@ class UnimodalTrainer:
         scaler = GradScaler(enabled=self.mixed_precision)
 
         warmup_scheduler = ut.WarmupScheduler(self.optimizer, self.warmup_epochs, self.lr, start_lr=self.min_lr)
-        lr_scheduler = optim.lr_scheduler.ReduceLROnPlateau(self.optimizer, mode='min', factor=0.1, patience=100)
+        lr_scheduler = optim.lr_scheduler.ReduceLROnPlateau(self.optimizer, mode='min', factor=0.1, patience=self.patience)
 
         best_model = None
         best_loss = 10000000
-        patience = self.patience
+        patience = 150
         print("Training Started...")
         for epoch in range(self.epochs):
             print(f"Epoch {epoch}/{self.epochs}.")
@@ -95,11 +95,11 @@ class UnimodalTrainer:
                     'val_loss': val_loss,
                     'val_acc': val_acc,
                 }
-            else:
-                patience -= 1
+            # else:
+            #     patience -= 1
 
-            if patience == 0:
-                break
+            # if patience == 0:
+            #     break
 
             # Warmup phase
             if epoch <= self.warmup_epochs:
@@ -178,7 +178,7 @@ class UnimodalTrainer:
 
 class BimodalTrainer:
     def __init__(self, eeg_encoder: torch.nn.Module, image_encoder: torch.nn.Module, optimizer: torch.optim.Optimizer, loss,
-                 save_path, filename, device='cuda:0', return_subject_id=False, **kwargs):
+                 save_path, filename, device='cuda:0', patience=25, return_subject_id=False, **kwargs):
 
         self.device = device
 
@@ -200,7 +200,7 @@ class BimodalTrainer:
         
         self.save_path = save_path
         self.filename = filename
-        self.patience = 150
+        self.patience = patience
         self.clip_grad = 0.8
         self.log_every = 0
 
@@ -209,7 +209,7 @@ class BimodalTrainer:
 
         warmup_scheduler = ut.WarmupScheduler(self.optimizer, self.warmup_epochs, self.lr, start_lr=self.min_lr)
         if self.scheduler == "plateau":
-            lr_scheduler = optim.lr_scheduler.ReduceLROnPlateau(self.optimizer, mode='min', factor=0.1, patience=100)
+            lr_scheduler = optim.lr_scheduler.ReduceLROnPlateau(self.optimizer, mode='min', factor=0.1, patience=self.patience)
         elif self.scheduler == "cosine":
             lr_scheduler = optim.lr_scheduler.CosineAnnealingWarmRestarts(self.optimizer, T_0=10, T_mult=1, eta_min=self.min_lr)
         else:
@@ -218,7 +218,7 @@ class BimodalTrainer:
 
         best_model = None
         best_loss = 10000000
-        patience = self.patience
+        patience = 150
         print("Training Started...")
         for epoch in range(self.epochs):
             print(f"Epoch {epoch}/{self.epochs}.")
@@ -289,11 +289,11 @@ class BimodalTrainer:
                     'optimizer_state_dict': copy.deepcopy(self.optimizer.state_dict()),
                     'val_loss': val_loss,
                 }
-            else:
-                patience -= 1
+            # else:
+            #     patience -= 1
 
-            if patience == 0:
-                break
+            # if patience == 0:
+            #     break
 
             # Warmup phase
             if epoch < self.warmup_epochs:

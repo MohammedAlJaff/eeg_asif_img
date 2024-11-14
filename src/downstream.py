@@ -51,13 +51,14 @@ def classification(
     return test_loss, test_acc
 
 
-def retrieval(eeg_encoder, img_encoder, data_loader, device="cuda:0"):
+def retrieval(eeg_encoder, img_encoder, data_loader, device="cuda:0", return_subject_id=False, **kwargs):
 
     eeg_encoder.eval()
+
     if img_encoder is not None:
         img_encoder.eval()
-    
-    img_embeddings, _ = get_embeddings(img_encoder, data_loader, modality="img", device=device)
+        
+    img_embeddings, _ = get_embeddings(img_encoder, data_loader, modality="img", return_subject_id=return_subject_id, device=device)
     img_embeddings = torch.from_numpy(img_embeddings).to(device)
 
     total = 0
@@ -67,6 +68,9 @@ def retrieval(eeg_encoder, img_encoder, data_loader, device="cuda:0"):
     with torch.no_grad():
         # progress_bar = tqdm(data_loader)
         for i, (data, y) in enumerate(data_loader):
+            if return_subject_id:
+                subject_id = data[1]
+                data = data[0]
             eeg, img = data
             eeg = eeg.to(device, non_blocking=True)
             img = img.to(device, non_blocking=True)
@@ -80,7 +84,10 @@ def retrieval(eeg_encoder, img_encoder, data_loader, device="cuda:0"):
             sim_img = (img_embeddings_batch @ img_embeddings.t()).softmax(dim=-1)
             _, tt_label = sim_img.topk(1)
 
-            eeg_embeddings = eeg_encoder(eeg)
+            if return_subject_id:
+                eeg_embeddings = eeg_encoder(eeg, subject_id)
+            else:
+                eeg_embeddings = eeg_encoder(eeg)
             eeg_embeddings = F.normalize(eeg_embeddings, p=2, dim=-1)
             
             similarity = (eeg_embeddings @ img_embeddings.t()).softmax(dim=-1)

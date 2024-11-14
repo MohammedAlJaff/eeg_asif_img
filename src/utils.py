@@ -60,6 +60,29 @@ def load_dataset(dataset_name, data_path, **kwargs):
             data_path=data_path,
             subject_id=kwargs['sid'],
             load_img=kwargs['load_img'],
+            return_subject_id=kwargs['return_subject_id'],
+            pretrain_eeg=kwargs['pretrain_eeg'],
+            test=test,
+            select_channels=select_channels,
+            training_ratio=kwargs['subj_training_ratio'],
+        )
+    elif dataset_name == "things-eeg-2-raw":
+        select_channels = kwargs['select_channels'] if 'select_channels' in kwargs.keys() else None
+        data_configs = {
+            "t_l": 0.0,
+            "t_h": 1.0,
+            "fs": 256, 
+            "n_samples": 256,
+            "n_channels": 63 if select_channels is None else len(select_channels),
+            "n_classes": 1654,
+        }
+        test = kwargs['test'] if 'test' in kwargs.keys() else False
+        print("TEST = ", test)
+        dataset = eimg.ThingsEEG2_from_raw(
+            data_path=data_path,
+            subject_id=kwargs['sid'],
+            load_img=kwargs['load_img'],
+            return_subject_id=kwargs['return_subject_id'],
             pretrain_eeg=kwargs['pretrain_eeg'],
             test=test,
             select_channels=select_channels,
@@ -71,7 +94,7 @@ def load_dataset(dataset_name, data_path, **kwargs):
         raise NotImplementedError
     return dataset, data_configs
 
-def get_embeddings(model, data_loader, modality="eeg", save=False, save_path=None, device='cuda'):
+def get_embeddings(model, data_loader, modality="eeg", return_subject_id=False, save=False, save_path=None, device='cuda'):
     
     # progress_bar = tqdm(data_loader)
     embeddings = None
@@ -80,6 +103,9 @@ def get_embeddings(model, data_loader, modality="eeg", save=False, save_path=Non
         model.eval()
     with torch.no_grad():
         for i, (data, y) in enumerate(data_loader):
+            if return_subject_id:
+                subject_id = data[1]
+                data = data[0]
             if modality == "eeg":
                 x, _ = data
             else:

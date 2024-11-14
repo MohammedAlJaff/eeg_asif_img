@@ -12,6 +12,7 @@ class ImageEncoder(nn.Module):
         backbone: str = "ViT",
         embed_dim: int = None,
         add_ln_layer: bool = False,
+        model_name: str = "openai/clip-vit-base-patch32",
         **kwargs
     ):
         super().__init__()
@@ -23,7 +24,7 @@ class ImageEncoder(nn.Module):
         elif backbone == "DeiT":
             self.image_backbone = DEIT()
         elif backbone == "CLIP_IMG":
-            self.image_backbone = CLIP_IMG()
+            self.image_backbone = CLIP_IMG(model_name=model_name)
         else:
             raise NotImplementedError
 

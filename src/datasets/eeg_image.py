@@ -304,14 +304,18 @@ class ThingsEEG2(Dataset):
         img_size=224,
         load_img=False,
         pretrain_eeg=False,
+        load_img_embedding=False,
         test=False,
         select_channels=None,
         training_ratio=1.0,
         download=False,
+        img_encoder=None
         ):
 
         self.pretrain_eeg = pretrain_eeg
         self.load_img = load_img
+        self.load_img_embedding = load_img_embedding
+        self.img_encoder = img_encoder
         self.img_transform = _transform(img_size)
         self.test = test
         self.training_ratio = training_ratio
@@ -425,10 +429,16 @@ class ThingsEEG2(Dataset):
             img_item = self.selected_indices[item] if self.selected_indices is not None else item
             img_idx = img_item % len(self.img_concepts)
 
-            img_file = os.path.join(self.img_parent_dir, 'training_images' if not self.test else 'test_images', 
-                    self.img_concepts[img_idx], self.img_files[img_idx]) 
-            pair = Image.open(img_file).convert('RGB')
-            sample = (torch.from_numpy(np.mean(eeg[:, :, :, :], axis=1)).to(torch.float), (self.img_transform(pair).to(torch.float)))
+            if self.load_img_embedding:
+                img_file = os.path.join(self.img_parent_dir, 'training_images' if not self.test else 'test_images', 
+                    self.img_concepts[img_idx], self.img_files[img_idx].replace(".jpg", f"_{self.img_encoder}.npy")) # dreamsim_clip_vitb32
+                pair = np.load(img_file)
+                sample = (torch.from_numpy(np.mean(eeg[:, :, :, :], axis=1)).to(torch.float), torch.from_numpy(pair.squeeze()).to(torch.float))
+            else:
+                img_file = os.path.join(self.img_parent_dir, 'training_images' if not self.test else 'test_images', 
+                        self.img_concepts[img_idx], self.img_files[img_idx]) 
+                pair = Image.open(img_file).convert('RGB')
+                sample = (torch.from_numpy(np.mean(eeg[:, :, :, :], axis=1)).to(torch.float), (self.img_transform(pair).to(torch.float)))
             label = self.labels_list[item]
             assert int(self.img_concepts[img_idx].split("_")[0])-1 == label
         elif self.pretrain_eeg:

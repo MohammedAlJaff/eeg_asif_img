@@ -54,7 +54,9 @@ def classification(
 def retrieval(eeg_encoder, img_encoder, data_loader, device="cuda:0"):
 
     eeg_encoder.eval()
-    img_encoder.eval()
+    if img_encoder is not None:
+        img_encoder.eval()
+    
     img_embeddings, _ = get_embeddings(img_encoder, data_loader, modality="img", device=device)
     img_embeddings = torch.from_numpy(img_embeddings).to(device)
 
@@ -70,7 +72,10 @@ def retrieval(eeg_encoder, img_encoder, data_loader, device="cuda:0"):
             img = img.to(device, non_blocking=True)
             y = y.to(device, non_blocking=True)
 
-            img_embeddings_batch = img_encoder(img)
+            if img_encoder is not None:
+                img_embeddings_batch = img_encoder(img)
+            else:
+                img_embeddings_batch = img
             img_embeddings_batch = F.normalize(img_embeddings_batch, p=2, dim=-1)
             sim_img = (img_embeddings_batch @ img_embeddings.t()).softmax(dim=-1)
             _, tt_label = sim_img.topk(1)

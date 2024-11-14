@@ -184,6 +184,7 @@ class BimodalTrainer:
 
         self.eeg_encoder = eeg_encoder.to(device)
         self.image_encoder = image_encoder.to(device) if image_encoder is not None else None
+        self.precompute_img_emb = kwargs['precompute_img_emb']
 
         self.loss = loss.to("cuda" if device.startswith("cuda") else "cpu")
         self.optimizer = optimizer
@@ -233,6 +234,8 @@ class BimodalTrainer:
                     z_i = self.eeg_encoder(eeg)
                     if self.image_encoder is not None:
                         z_j = self.image_encoder(image)
+                    elif self.precompute_img_emb:
+                        z_j = image
                     else:
                         z_j = self.eeg_encoder(image)
                     z_i = F.normalize(z_i, p=2, dim=-1)
@@ -332,6 +335,8 @@ class BimodalTrainer:
                     z_i = eeg_encoder(eeg)
                     if image_encoder is not None:
                         z_j = image_encoder(image)
+                    elif self.precompute_img_emb:
+                        z_j = image
                     else:
                         z_j = eeg_encoder(image)
                     z_i = F.normalize(z_i, p=2, dim=-1)

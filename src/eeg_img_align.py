@@ -27,7 +27,8 @@ model_configs = {
         'eegnet': {},
         'lstm': {'lstm_size': 128, 'lstm_layers': 1},
         'EEGChannelNet': {},
-        'resnet1d': {}
+        'resnet1d': {},
+        'dreamsim_clip_vitb32': {'embed_dim': 512},
     }
 
 def seed_everything(seed_val):
@@ -70,6 +71,7 @@ def parse_args():
     parser.add_argument('--n_workers', type=int, default=4)
     parser.add_argument('--downstream', type=str, default=None)
     parser.add_argument('--separate_test', action="store_true")
+    parser.add_argument('--precompute_img_emb', action="store_true")
     parser.add_argument('-b', '--batch', type=int, default=512)
     parser.add_argument('--lr', type=float, default=0.0001)
     parser.add_argument('--seed', type=int, default=42)
@@ -78,8 +80,10 @@ def parse_args():
 
 def return_dataloaders(dataset_nm, data_pth, sid, n_classes, batch, num_workers, seed_val, split_path, device_type, separate_test=False, **kwargs):
 
-    data, ds_configs = utils.load_dataset(dataset_name=dataset_nm, data_path=paths['eeg_data'], n_classes=n_classes, sid=sid, load_img=kwargs['load_img'], 
-                                          pretrain_eeg=kwargs['pretrain_eeg'], select_channels=kwargs['select_channels'], subj_training_ratio=kwargs['subj_training_ratio'])
+    data, ds_configs = utils.load_dataset(
+        dataset_name=dataset_nm, data_path=paths['eeg_data'], n_classes=n_classes, sid=sid, load_img=kwargs['load_img'], 
+        pretrain_eeg=kwargs['pretrain_eeg'], select_channels=kwargs['select_channels'], subj_training_ratio=kwargs['subj_training_ratio'],
+        load_img_embedding=kwargs['load_img_embedding'], img_encoder=kwargs['img_enc_name'])
     print(ds_configs)
     
     g = torch.Generator().manual_seed(seed_val)
@@ -107,7 +111,8 @@ def return_dataloaders(dataset_nm, data_pth, sid, n_classes, batch, num_workers,
             train_data, val_data = torch.utils.data.random_split(
                 data, [0.8, 0.2], generator=g)
             test_data, _ = utils.load_dataset(dataset_name=dataset_nm, data_path=paths['eeg_data'], n_classes=n_classes, sid=kwargs['test_subject'], test=True, load_img=kwargs['load_img'], 
-                                              pretrain_eeg=kwargs['pretrain_eeg'], select_channels=kwargs['select_channels'], subj_training_ratio=1.0)
+                                              pretrain_eeg=kwargs['pretrain_eeg'], select_channels=kwargs['select_channels'], subj_training_ratio=1.0,
+                                              load_img_embedding=kwargs['load_img_embedding'], img_encoder=kwargs['img_enc_name'])
         train_dl = DataLoader(train_data, batch_size=batch, shuffle=True,
                                 drop_last=True,
                                 num_workers=num_workers,
@@ -214,9 +219,11 @@ if __name__ == "__main__":
             separate_test=separate_test_set,
             select_channels=channels,
             subj_training_ratio=args.subj_training_ratio if args.subj_training_ratio > 0 else 0.01,
+            load_img_embedding=args.precompute_img_emb,
+            img_enc_name=img_enc_name,
             device_type=device)    
         
-        if modality == "eeg-img":
+        if modality == "eeg-img" and not args.precompute_img_emb:
             img_encoder = ImageEncoder(
                 backbone=img_enc_name,
                 embed_dim=None,
@@ -225,10 +232,14 @@ if __name__ == "__main__":
             img_encoder = img_encoder.float()
 
             embedding_size = img_encoder.embed_dim
+        elif modality == "eeg-img" and args.precompute_img_emb:
+            img_encoder = None
+            embedding_size = model_configs[img_enc_name]['embed_dim']
         else:
             img_encoder = None
             embedding_size = args.embed_dim
         
+        print("eeg embedding size: ", embedding_size)
         eeg_encoder = EEGEncoder(
             embed_dim=embedding_size,
             backbone=eeg_enc_name,
@@ -254,10 +265,10 @@ if __name__ == "__main__":
             eeg_encoder.to(device)
         
         if epochs > 0:
-            if modality == "eeg-img":
-                optim = torch.optim.AdamW(itertools.chain(eeg_encoder.parameters(), img_encoder.parameters()), lr=min_lr, weight_decay=weight_decay)
-            else:
-                optim = torch.optim.AdamW(eeg_encoder.parameters(), lr=min_lr, weight_decay=weight_decay)
+            # if modality == "eeg-img":
+            #     optim = torch.optim.AdamW(itertools.chain(eeg_encoder.parameters(), img_encoder.parameters()), lr=min_lr, weight_decay=weight_decay)
+            # else:
+            optim = torch.optim.AdamW(eeg_encoder.parameters(), lr=min_lr, weight_decay=weight_decay)
             trainer = BimodalTrainer(
                 eeg_encoder=eeg_encoder,
                 image_encoder=img_encoder,
@@ -270,6 +281,7 @@ if __name__ == "__main__":
                 num_classes=n_classes,
                 save_path=paths["save_path"], 
                 filename=f'{eeg_enc_name}_{dataset_name}', 
+                precompute_img_emb=args.precompute_img_emb,
                 device=device
                 )
             best_eeg_encoder = trainer.train(train_data_loader, val_data_loader)
@@ -292,6 +304,8 @@ if __name__ == "__main__":
                 separate_test=separate_test_set,
                 select_channels=channels,
                 subj_training_ratio=args.subj_training_ratio,
+                load_img_embedding=args.precompute_img_emb,
+                img_enc_name=img_enc_name,
                 device_type=device)
             loaders = {'train': train_data_loader, 'val': val_data_loader, 'test': test_data_loader} 
             test_loss, test_acc = downstream.classification(
@@ -316,6 +330,8 @@ if __name__ == "__main__":
                 separate_test=separate_test_set,
                 select_channels=channels,
                 subj_training_ratio=args.subj_training_ratio if args.subj_training_ratio > 0 else 0.01,
+                load_img_embedding=args.precompute_img_emb,
+                img_enc_name=img_enc_name,
                 device_type=device)
             top1_acc, top3_acc, top5_acc = downstream.retrieval(eeg_encoder, img_encoder, test_data_loader, device=device)
             topk_scores = {

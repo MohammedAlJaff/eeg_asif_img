@@ -64,6 +64,8 @@ def load_dataset(dataset_name, data_path, **kwargs):
             test=test,
             select_channels=select_channels,
             training_ratio=kwargs['subj_training_ratio'],
+            load_img_embedding=kwargs['load_img_embedding'],
+            img_encoder=kwargs['img_encoder']
         )
     else: 
         raise NotImplementedError
@@ -74,7 +76,8 @@ def get_embeddings(model, data_loader, modality="eeg", save=False, save_path=Non
     # progress_bar = tqdm(data_loader)
     embeddings = None
     labels = None
-    model.eval()
+    if model is not None:
+        model.eval()
     with torch.no_grad():
         for i, (data, y) in enumerate(data_loader):
             if modality == "eeg":
@@ -83,7 +86,10 @@ def get_embeddings(model, data_loader, modality="eeg", save=False, save_path=Non
                 _, x = data
             x = x.to(device)
             y = y.to(device)
-            e = model(x)
+            if model is not None:
+                e = model(x)
+            else:
+                e = x
             e = torch.nn.functional.normalize(e, p=2, dim=-1)
             if embeddings is None:
                 embeddings = e.detach().cpu().numpy()
